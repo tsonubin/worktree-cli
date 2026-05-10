@@ -5,10 +5,11 @@ import { resolve } from "node:path";
 import { getDefaultEditor, shouldSkipEditor } from "../config.js";
 import { getWorktrees, findWorktreeByBranch, findWorktreeByPath, WorktreeInfo } from "../utils/git.js";
 import { selectWorktree } from "../utils/tui.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 
 export async function openWorktreeHandler(
     pathOrBranch: string = "",
-    options: { editor?: string }
+    options: { editor?: string; changeDir?: boolean } = {}
 ) {
     try {
         // 1. Validate we're in a git repo
@@ -117,6 +118,10 @@ export async function openWorktreeHandler(
                 console.error(chalk.red(`Failed to open editor "${editorCommand}". Please ensure it's installed and in your PATH.`));
                 process.exit(1);
             }
+        }
+
+        if (options.changeDir) {
+            writeCdTarget(targetPath);
         }
     } catch (error) {
         if (error instanceof Error) {

@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { getDefaultEditor, shouldSkipEditor } from "../config.js";
 import { findWorktreeByBranch, findWorktreeByPath } from "../utils/git.js";
 import { selectWorktree } from "../utils/tui.js";
-export async function openWorktreeHandler(pathOrBranch = "", options) {
+import { writeCdTarget } from "../utils/cd-target.js";
+export async function openWorktreeHandler(pathOrBranch = "", options = {}) {
     try {
         // 1. Validate we're in a git repo
         await execa("git", ["rev-parse", "--is-inside-work-tree"]);
@@ -109,6 +110,9 @@ export async function openWorktreeHandler(pathOrBranch = "", options) {
                 console.error(chalk.red(`Failed to open editor "${editorCommand}". Please ensure it's installed and in your PATH.`));
                 process.exit(1);
             }
+        }
+        if (options.changeDir) {
+            writeCdTarget(targetPath);
         }
     }
     catch (error) {

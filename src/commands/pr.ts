@@ -18,6 +18,7 @@ import { AtomicWorktreeOperation } from "../utils/atomic.js";
 import { handleDirtyState, selectPullRequest } from "../utils/tui.js";
 import { withSpinner } from "../utils/spinner.js";
 import { onShutdown } from "../utils/shutdown.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 
 type GitProvider = 'gh' | 'glab';
 
@@ -240,7 +241,7 @@ async function fetchPRBranch(prNumber: string, localBranchName: string, provider
 
 export async function prWorktreeHandler(
     prNumber?: string,
-    options: { path?: string; install?: string; editor?: string; setup?: boolean; trust?: boolean } = {}
+    options: { path?: string; install?: string; editor?: string; setup?: boolean; trust?: boolean; changeDir?: boolean } = {}
 ) {
     let stashHash: string | null = null;
     let unregisterShutdown: (() => void) | null = null;
@@ -414,6 +415,10 @@ export async function prWorktreeHandler(
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
         }
         console.log(chalk.green(`Ready for work. Use 'git push' inside the worktree directory to update the ${requestType}.`));
+
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
+        }
 
     } catch (error: any) {
         console.error(chalk.red(`Failed to set up worktree from ${prNumber ? `PR/MR #${prNumber}` : 'PR/MR'}:`), error.message || error);

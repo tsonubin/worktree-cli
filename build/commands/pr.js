@@ -9,6 +9,7 @@ import { AtomicWorktreeOperation } from "../utils/atomic.js";
 import { handleDirtyState, selectPullRequest } from "../utils/tui.js";
 import { withSpinner } from "../utils/spinner.js";
 import { onShutdown } from "../utils/shutdown.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 /**
  * Extract repository owner and name from git remote URL
  */
@@ -355,6 +356,9 @@ export async function prWorktreeHandler(prNumber, options = {}) {
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
         }
         console.log(chalk.green(`Ready for work. Use 'git push' inside the worktree directory to update the ${requestType}.`));
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
+        }
     }
     catch (error) {
         console.error(chalk.red(`Failed to set up worktree from ${prNumber ? `PR/MR #${prNumber}` : 'PR/MR'}:`), error.message || error);
