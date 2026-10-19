@@ -354,10 +354,12 @@ export async function prWorktreeHandler(
                 console.log(chalk.green(`Existing worktree found at ${resolvedPath} for branch "${prBranchName}".`));
             } else if (existingWorktree) {
                 console.error(chalk.red(`Error: Directory "${resolvedPath}" is a worktree, but it's linked to branch "${existingWorktree.branch}", not "${prBranchName}".`));
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             } else {
                 console.error(chalk.red(`Error: Directory "${resolvedPath}" exists but is not a Git worktree. Please remove it or choose a different path using --path.`));
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
         } else {
             // 9. Create the worktree using atomic operations (Improvement #9)
@@ -417,7 +419,7 @@ export async function prWorktreeHandler(
 
     } catch (error: any) {
         console.error(chalk.red(`Failed to set up worktree from ${prNumber ? `PR/MR #${prNumber}` : 'PR/MR'}:`), error.message || error);
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
         // Unregister shutdown handler
         if (unregisterShutdown) {

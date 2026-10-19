@@ -73,7 +73,8 @@ export async function extractWorktreeHandler(
             if (!selectedBranch) {
                 console.error(chalk.red("Error: Could not determine current branch (possibly in detached HEAD state)."));
                 console.error(chalk.yellow("Please specify a branch name: wt extract <branch-name>"));
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
 
             console.log(chalk.blue(`No branch specified. Using current branch: ${selectedBranch}`));
@@ -83,7 +84,8 @@ export async function extractWorktreeHandler(
         const validation = validateBranchName(selectedBranch);
         if (!validation.isValid) {
             console.error(chalk.red(`Error: ${validation.error}`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 5. Check if branch already has a worktree
@@ -93,7 +95,8 @@ export async function extractWorktreeHandler(
         if (existingWorktree) {
             console.error(chalk.red(`Error: Branch "${selectedBranch}" already has a worktree at ${existingWorktree.path}.`));
             console.error(chalk.yellow("Use 'wt list' to see existing worktrees."));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 6. Verify the branch exists (either locally or remotely)
@@ -112,7 +115,8 @@ export async function extractWorktreeHandler(
 
         if (!branchExistsLocally && !branchExistsRemotely) {
             console.error(chalk.red(`Error: Branch "${selectedBranch}" does not exist locally or remotely.`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 7. Build final path for the new worktree
@@ -126,7 +130,8 @@ export async function extractWorktreeHandler(
             await stat(resolvedPath);
             console.error(chalk.red(`Error: Directory already exists at: ${resolvedPath}`));
             console.error(chalk.yellow("Please choose a different path with --path option."));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         } catch {
             // Directory doesn't exist, continue with creation
         }
@@ -186,7 +191,7 @@ export async function extractWorktreeHandler(
         } else {
             console.error(chalk.red("Failed to extract worktree:"), error);
         }
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
         // Unregister shutdown handler
         if (unregisterShutdown) {

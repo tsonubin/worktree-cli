@@ -1,11 +1,11 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
-import { resolve, join } from "node:path";
 import { getDefaultEditor, shouldSkipEditor } from "../config.js";
 import {
     isWorktreeClean,
     isMainRepoBare,
+    findWorktreeByPath,
     stashChanges,
     applyAndDropStash,
     getUpstreamRemote,
@@ -96,19 +96,22 @@ export async function setupWorktreeHandler(
         if (directoryExists) {
             console.log(chalk.yellow(`Directory already exists at: ${resolvedPath}`));
 
-            let isGitWorktree = false;
-            try {
-                await stat(join(resolvedPath, ".git"));
-                isGitWorktree = true;
-            } catch {
-                // Not a git worktree
+            const existingWorktree = await findWorktreeByPath(resolvedPath);
+            if (!existingWorktree) {
+                console.error(chalk.red(`Error: Directory "${resolvedPath}" exists but is not a worktree of this repository.`));
+                console.error(chalk.yellow("Please remove it or choose a different path with the --path option."));
+                process.exitCode = 1;
+                return;
             }
 
-            if (isGitWorktree) {
-                console.log(chalk.green(`Using existing worktree at: ${resolvedPath}`));
-            } else {
-                console.log(chalk.yellow(`Warning: Directory exists but is not a git worktree.`));
+            if (existingWorktree.branch !== branchName) {
+                console.error(chalk.red(`Error: Directory "${resolvedPath}" is a worktree for branch "${existingWorktree.branch ?? "(detached)"}", not "${branchName}".`));
+                console.error(chalk.yellow("Please choose a different path with the --path option."));
+                process.exitCode = 1;
+                return;
             }
+
+            console.log(chalk.green(`Using existing worktree at: ${resolvedPath}`));
         } else {
             console.log(chalk.blue(`Creating new worktree for branch "${branchName}" at: ${resolvedPath}`));
 
@@ -174,7 +177,7 @@ export async function setupWorktreeHandler(
         } else {
             console.error(chalk.red("Failed to create new worktree:"), error);
         }
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
         // Unregister shutdown handler
         if (unregisterShutdown) {

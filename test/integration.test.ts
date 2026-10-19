@@ -209,6 +209,39 @@ describe('wt new', () => {
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
+
+    it('should fail when the target directory exists but is not a worktree', async () => {
+        const worktreePath = join(ctx.testDir, 'plain-dir');
+        await mkdir(worktreePath, { recursive: true });
+
+        const result = await runCli(
+            ['new', 'feature/plain-dir', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('not a worktree of this repository');
+    });
+
+    it('should fail when the target directory is a worktree for another branch', async () => {
+        const worktreePath = join(ctx.testDir, 'other-branch-wt');
+        await runCli(
+            ['new', 'feature/first', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        const result = await runCli(
+            ['new', 'feature/second', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('is a worktree for branch');
+        expect(result.stderr).toContain('feature/first');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
 });
 
 describe('wt remove', () => {
