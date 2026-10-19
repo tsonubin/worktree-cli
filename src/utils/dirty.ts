@@ -25,13 +25,20 @@ export interface DirtyStateGuard {
  *
  * - Warns if a stash from a previous (crashed) run was never restored.
  * - Skips the dirty check for bare repositories.
- * - Prompts to stash/abort/continue when the main worktree is dirty; stashed
- *   changes are restored by `finish()` and on SIGINT.
+ * - With `options.stash`, stashes without prompting (for non-interactive runs).
+ * - Prompts to stash/abort/continue when the main worktree is dirty and a
+ *   terminal is available; without a terminal and without `options.stash`,
+ *   fails with guidance instead of hanging on a prompt.
+ * - Stashed changes are restored by `finish()` and on SIGINT.
  *
  * @param stashMessage - Message recorded with the stash, identifying the operation
+ * @param options - `stash` stashes unprompted instead of prompting
  * @returns Guard whose `finish()` must be called exactly once (from `finally`)
  */
-export async function guardDirtyState(stashMessage: string): Promise<DirtyStateGuard> {
+export async function guardDirtyState(
+    stashMessage: string,
+    options: { stash?: boolean } = {}
+): Promise<DirtyStateGuard> {
     const pending = await readStashRecord(".");
     if (pending) {
         console.warn(chalk.yellow(`Warning: stashed changes from a previous run were never restored (commit ${pending.hash}).`));
@@ -47,7 +54,16 @@ export async function guardDirtyState(stashMessage: string): Promise<DirtyStateG
         const isClean = await isWorktreeClean(".");
 
         if (!isClean) {
-            const action = await handleDirtyState("Your main worktree has uncommitted changes.");
+            let action: "stash" | "abort" | "continue";
+            if (options.stash) {
+                action = "stash";
+            } else if (!process.stdin.isTTY) {
+                console.error(chalk.red("Error: The main worktree has uncommitted changes and no interactive terminal is available."));
+                console.error(chalk.yellow("Commit or stash them first, or re-run with --stash to stash and restore them automatically."));
+                process.exit(1);
+            } else {
+                action = await handleDirtyState("Your main worktree has uncommitted changes.");
+            }
 
             if (action === "abort") {
                 console.log(chalk.yellow("Operation cancelled."));

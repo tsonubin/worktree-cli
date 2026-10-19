@@ -10,6 +10,12 @@ export async function purgeWorktreesHandler() {
         // Ensure we're in a Git repository
         await validateGitRepo();
 
+        // Purge is interactive (multi-select plus confirmation) and needs a terminal
+        if (!process.stdin.isTTY) {
+            console.error(chalk.red("Error: 'wt purge' requires an interactive terminal."));
+            process.exit(1);
+        }
+
         // Get all worktrees using the robust parsing utility
         const worktrees = await getWorktrees();
 

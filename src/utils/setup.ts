@@ -92,6 +92,12 @@ export async function runSetupScriptsSecure(
 
     console.log(chalk.blue(`Found setup file: ${setupResult.filePath}`));
 
+    // Without a terminal the confirmation prompt cannot run: fail with guidance
+    // instead of hanging (trust mode is the non-interactive escape hatch)
+    if (!options.trust && !process.stdin.isTTY) {
+        throw new Error("Setup commands require confirmation but no interactive terminal is available. Re-run with --trust to execute them.");
+    }
+
     // Show commands and ask for confirmation (unless --trust flag is set)
     const shouldRun = await confirmCommands(setupResult.commands, {
         title: "The following setup commands will be executed:",

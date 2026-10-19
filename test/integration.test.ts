@@ -277,6 +277,41 @@ describe('wt new', () => {
         await rm(join(ctx.repoDir, '.git', 'wt-stash.json'), { force: true });
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
+
+    it('should fail headless when the main worktree is dirty and --stash is not set', async () => {
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'headless-dirty');
+        const result = await runCli(['new', 'feature/headless-dirty', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('--stash');
+
+        // Nothing was stashed: the uncommitted file must be untouched
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+        await rm(dirtyFile, { force: true });
+    });
+
+    it('should stash and restore with --stash when run headless', async () => {
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'headless-stash');
+        const result = await runCli(
+            ['new', 'feature/headless-stash', '--path', worktreePath, '--editor', 'none', '--stash'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('Changes stashed successfully.');
+        expect(result.stdout).toContain('Restoring your stashed changes...');
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+
+        // Cleanup
+        await rm(dirtyFile, { force: true });
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
 });
 
 describe('wt --version', () => {
@@ -412,6 +447,35 @@ describe('Command argument validation', () => {
         const result = await runCli(['merge', 'main'], ctx.repoDir);
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain('into itself');
+    });
+
+    it('interactive-only invocations should fail headless', async () => {
+        const cases: Array<{ args: string[]; hint: string }> = [
+            { args: ['remove'], hint: "'wt remove'" },
+            { args: ['open'], hint: "'wt open'" },
+            { args: ['pr'], hint: "'wt pr'" },
+            { args: ['purge'], hint: "'wt purge'" },
+        ];
+        for (const { args, hint } of cases) {
+            const result = await runCli(args, ctx.repoDir);
+            expect(result.exitCode, `${args.join(' ')} should fail headless`).toBe(1);
+            expect(result.stderr).toContain(hint);
+        }
+    });
+
+    it('wt setup should require --trust to run setup scripts headless', async () => {
+        await writeFile(join(ctx.repoDir, 'worktrees.json'), JSON.stringify({ 'setup-worktree': ['echo setup-ran'] }));
+        await execa('git', ['add', 'worktrees.json'], { cwd: ctx.repoDir });
+        await execa('git', ['commit', '-m', 'add setup file'], { cwd: ctx.repoDir });
+
+        const worktreePath = join(ctx.testDir, 'headless-setup');
+        const result = await runCli(['setup', 'feature/headless-setup', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('--trust');
+
+        // Cleanup
+        await rm(join(ctx.repoDir, 'worktrees.json'), { force: true });
     });
 });
 

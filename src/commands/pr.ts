@@ -239,7 +239,7 @@ async function fetchPRBranch(prNumber: string, localBranchName: string, provider
 
 export async function prWorktreeHandler(
     prNumber?: string,
-    options: { path?: string; install?: string; editor?: string; setup?: boolean; trust?: boolean } = {}
+    options: { path?: string; install?: string; editor?: string; setup?: boolean; stash?: boolean; trust?: boolean } = {}
 ) {
     let guard: DirtyStateGuard | undefined;
 
@@ -258,8 +258,13 @@ export async function prWorktreeHandler(
         const isPR = provider === 'gh';
         const requestType = isPR ? "PR" : "MR";
 
-        // 3. Interactive PR selection if no number provided (Improvement #4)
+        // 3. Interactive PR selection if no number provided (requires a terminal)
         if (!prNumber) {
+            if (!process.stdin.isTTY) {
+                console.error(chalk.red(`Error: 'wt pr' needs a PR/MR number when run non-interactively.`));
+                console.error(chalk.yellow(`Usage: wt pr <prNumber> [--stash] [--setup] [--trust]`));
+                process.exit(1);
+            }
             const selectedPR = await selectPullRequest(provider);
             if (!selectedPR) {
                 console.log(chalk.yellow("No PR/MR selected. Exiting."));
@@ -269,7 +274,7 @@ export async function prWorktreeHandler(
         }
 
         // 4. Protect uncommitted changes in the main worktree (stash/restore)
-        guard = await guardDirtyState(`wt-pr: Before creating worktree for ${requestType} #${prNumber}`);
+        guard = await guardDirtyState(`wt-pr: Before creating worktree for ${requestType} #${prNumber}`, { stash: options.stash });
 
         // 5. Get the target branch name from the PR/MR
         console.log(chalk.blue(`Fetching branch name for ${requestType} #${prNumber}...`));

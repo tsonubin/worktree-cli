@@ -15,8 +15,13 @@ export async function openWorktreeHandler(
 
         let targetWorktree: WorktreeInfo | null = null;
 
-        // Improvement #4: Interactive TUI for missing arguments
+        // Interactive TUI for missing arguments (requires a terminal)
         if (!pathOrBranch) {
+            if (!process.stdin.isTTY) {
+                console.error(chalk.red("Error: 'wt open' needs a path or branch when run non-interactively."));
+                console.error(chalk.yellow("Usage: wt open <pathOrBranch>"));
+                process.exit(1);
+            }
             const selected = await selectWorktree({
                 message: "Select a worktree to open",
                 excludeMain: false,

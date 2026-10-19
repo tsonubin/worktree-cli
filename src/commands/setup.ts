@@ -11,7 +11,7 @@ import { runSetupScriptsSecure } from "../utils/setup.js";
 
 export async function setupWorktreeHandler(
     branchName?: string,
-    options: { path?: string; checkout?: boolean; install?: string; editor?: string; trust?: boolean } = {}
+    options: { path?: string; checkout?: boolean; install?: string; editor?: string; stash?: boolean; trust?: boolean } = {}
 ) {
     let guard: DirtyStateGuard | undefined;
 
@@ -36,7 +36,7 @@ export async function setupWorktreeHandler(
         }
 
         // 2-3. Protect uncommitted changes in the main worktree (stash/restore)
-        guard = await guardDirtyState(`wt-setup: Before creating worktree for ${branchName}`);
+        guard = await guardDirtyState(`wt-setup: Before creating worktree for ${branchName}`, { stash: options.stash });
 
         // 4. Build final path for the new worktree
         const resolvedPath = await resolveWorktreePath(branchName, {

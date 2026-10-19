@@ -14,8 +14,13 @@ export async function removeWorktreeHandler(
 
         let targetWorktree: WorktreeInfo | null = null;
 
-        // Improvement #4: Interactive TUI for missing arguments
+        // Interactive TUI for missing arguments (requires a terminal)
         if (!pathOrBranch) {
+            if (!process.stdin.isTTY) {
+                console.error(chalk.red("Error: 'wt remove' needs a path or branch when run non-interactively."));
+                console.error(chalk.yellow("Usage: wt remove <pathOrBranch> [--force]"));
+                process.exit(1);
+            }
             const selected = await selectWorktree({
                 message: "Select a worktree to remove",
                 excludeMain: true,  // Don't allow removing main worktree

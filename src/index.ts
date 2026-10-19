@@ -27,7 +27,7 @@ program
   .option("-p, --path <path>", "Relative path/folder name for new worktree")
   .option(
     "-c, --checkout",
-    "Create new branch if it doesn't exist and checkout automatically",
+    "Deprecated: new branches are created automatically when needed",
     false
   )
   .option(
@@ -37,6 +37,11 @@ program
   .option(
     "-e, --editor <editor>",
     "Editor to use for opening the worktree (e.g., code, webstorm, windsurf, etc.)"
+  )
+  .option(
+    "--stash",
+    "Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)",
+    false
   )
   .description(
     "Create a new worktree for the specified branch, install dependencies if specified, and open in editor."
@@ -49,7 +54,7 @@ program
   .option("-p, --path <path>", "Relative path/folder name for new worktree")
   .option(
     "-c, --checkout",
-    "Create new branch if it doesn't exist and checkout automatically",
+    "Deprecated: new branches are created automatically when needed",
     false
   )
   .option(
@@ -63,6 +68,11 @@ program
   .option(
     "-t, --trust",
     "Trust and run setup commands without confirmation (for CI environments)",
+    false
+  )
+  .option(
+    "--stash",
+    "Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)",
     false
   )
   .description(
@@ -135,6 +145,11 @@ program
     "-t, --trust",
     "Trust and execute setup scripts without confirmation (use with caution)"
   )
+  .option(
+    "--stash",
+    "Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)",
+    false
+  )
   .description(
     "Fetch the branch for a given GitHub PR or GitLab MR number and create a worktree."
   )
@@ -161,6 +176,11 @@ program
   .option(
     "-e, --editor <editor>",
     "Editor to use for opening the worktree (overrides default editor)"
+  )
+  .option(
+    "--stash",
+    "Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)",
+    false
   )
   .description(
     "Extract an existing branch as a new worktree. If no branch is specified, extracts the current branch."

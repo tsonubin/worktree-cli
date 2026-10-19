@@ -10,7 +10,7 @@ import { AtomicWorktreeOperation } from "../utils/atomic.js";
 
 export async function extractWorktreeHandler(
     branchName?: string,
-    options: { path?: string; install?: string; editor?: string } = {}
+    options: { path?: string; install?: string; editor?: string; stash?: boolean } = {}
 ) {
     let guard: DirtyStateGuard | undefined;
 
@@ -19,7 +19,7 @@ export async function extractWorktreeHandler(
         await validateGitRepo();
 
         // 2-3. Protect uncommitted changes in the main worktree (stash/restore)
-        guard = await guardDirtyState(`wt-extract: Before extracting worktree`);
+        guard = await guardDirtyState(`wt-extract: Before extracting worktree`, { stash: options.stash });
 
         // 4. Determine which branch to extract
         let selectedBranch = branchName;

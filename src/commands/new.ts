@@ -34,7 +34,7 @@ export async function newWorktreeHandler(
         }
 
         // 2-3. Protect uncommitted changes in the main worktree (stash/restore)
-        guard = await guardDirtyState(`wt-new: Before creating worktree for ${branchName}`);
+        guard = await guardDirtyState(`wt-new: Before creating worktree for ${branchName}`, { stash: options.stash });
 
         // 4. Build final path for the new worktree (Improvement #1 & #7)
         const resolvedPath = await resolveWorktreePath(branchName, {
