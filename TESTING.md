@@ -1,5 +1,8 @@
 # Manual Tests for @johnlindquist/worktree CLI
 
+> Automated tests live in `test/` and run with `pnpm test` (which builds `build/` first —
+> the integration tests execute the compiled CLI from `build/index.js`).
+
 ## Manual Test for CLI Command Name Change
 
 1. Install the package globally:

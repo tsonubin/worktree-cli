@@ -44,6 +44,14 @@ wt new feature/vscode -e code
 - **Abort**: Cancel the operation
 - **Continue anyway**: Proceed with uncommitted changes
 
+Stashed changes are restored even if the command fails afterwards. If a run is
+killed before restoring, the next `wt` command warns and prints the exact
+`git stash apply <hash>` recovery command.
+
+**Existing directories**: If the target directory already exists, it must be a
+worktree of the requested branch — `wt new` reuses it in that case and errors
+otherwise (no silent adoption or deletion of your directories).
+
 ### Create a new worktree with setup scripts
 
 ```bash
@@ -176,6 +184,8 @@ Merge a branch from its worktree into the current branch. The command has been d
 - Checks for uncommitted changes in the target worktree by default
 - Requires explicit opt-in flags for destructive operations
 - Preserves the source worktree after merge by default
+- Refuses to merge a branch into itself, and prints `git merge --continue` / `--abort`
+  guidance when a merge fails
 
 Options:
 - `--auto-commit`: Automatically commit uncommitted changes in the target worktree before merging
@@ -233,6 +243,14 @@ wt config path
 The default editor will be used when creating new worktrees unless overridden with the `-e` flag.
 
 Setting the editor to `none` will skip opening any editor after creating a worktree, which is useful for CI/CD pipelines or scripts.
+
+The `WT_EDITOR` environment variable overrides the configured default editor for a single
+run (and also accepts `none`), e.g. `WT_EDITOR=none wt new feature/x`:
+
+```bash
+WT_EDITOR=code wt new feature/login   # open this worktree in VS Code
+WT_EDITOR=none wt new feature/script  # never open an editor
+```
 
 ### Configure Git Provider
 
