@@ -30,7 +30,7 @@ async function createTestRepo(): Promise<TestContext> {
     await mkdir(repoDir, { recursive: true });
 
     // Initialize git repo
-    await execa('git', ['init'], { cwd: repoDir });
+    await execa('git', ['init', '-b', 'main'], { cwd: repoDir });
     await execa('git', ['config', 'user.email', 'test@test.com'], { cwd: repoDir });
     await execa('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
 
