@@ -1,9 +1,8 @@
-import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getDefaultEditor, shouldSkipEditor } from "../config.js";
-import { getWorktrees, findWorktreeByBranch, findWorktreeByPath, WorktreeInfo } from "../utils/git.js";
+import { findWorktreeByBranch, findWorktreeByPath, validateGitRepo, WorktreeInfo } from "../utils/git.js";
+import { openInEditor } from "../utils/editor.js";
 import { selectWorktree } from "../utils/tui.js";
 
 export async function openWorktreeHandler(
@@ -12,7 +11,7 @@ export async function openWorktreeHandler(
 ) {
     try {
         // 1. Validate we're in a git repo
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
         let targetWorktree: WorktreeInfo | null = null;
 
@@ -101,22 +100,11 @@ export async function openWorktreeHandler(
         }
 
         // Open in the specified editor (or use configured default)
-        const configuredEditor = getDefaultEditor();
-        const editorCommand = options.editor || configuredEditor;
-
-        if (shouldSkipEditor(editorCommand)) {
-            console.log(chalk.gray(`Editor set to 'none', skipping editor open.`));
+        const outcome = await openInEditor(targetPath, options.editor);
+        if (outcome === "failed") {
+            process.exitCode = 1;
+        } else if (outcome === "skipped") {
             console.log(chalk.green(`Worktree path: ${targetPath}`));
-        } else {
-            console.log(chalk.blue(`Opening ${targetPath} in ${editorCommand}...`));
-
-            try {
-                await execa(editorCommand, [targetPath], { stdio: "inherit" });
-                console.log(chalk.green(`Successfully opened worktree in ${editorCommand}.`));
-            } catch (editorError) {
-                console.error(chalk.red(`Failed to open editor "${editorCommand}". Please ensure it's installed and in your PATH.`));
-                process.exit(1);
-            }
         }
     } catch (error) {
         if (error instanceof Error) {

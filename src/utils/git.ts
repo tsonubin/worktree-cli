@@ -1,5 +1,57 @@
 import { execa, ExecaError } from "execa";
 import chalk from "chalk";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+/**
+ * Record of stashed changes that have not been restored yet.
+ * The stash commit created by `stashChanges` is dangling (not in `refs/stash`),
+ * so this file is the durable link back to the user's uncommitted work.
+ */
+interface StashRecord {
+    hash: string;
+    message: string;
+    createdAt: string;
+}
+
+async function stashRecordPath(cwd: string): Promise<string> {
+    const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--git-common-dir"]);
+    return join(stdout.trim(), "wt-stash.json");
+}
+
+/**
+ * Read the record of a not-yet-restored stash, if one exists.
+ * Returns null when no record exists or it cannot be read/parsed.
+ */
+export async function readStashRecord(cwd: string = "."): Promise<StashRecord | null> {
+    try {
+        const raw = await readFile(await stashRecordPath(cwd), "utf-8");
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && "hash" in parsed && typeof parsed.hash === "string") {
+            return {
+                hash: parsed.hash,
+                message: "message" in parsed && typeof parsed.message === "string" ? parsed.message : "",
+                createdAt: "createdAt" in parsed && typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+            };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Validate that we are inside a git work tree
+ *
+ * @throws Error with a user-friendly message when we are not
+ */
+export async function validateGitRepo(): Promise<void> {
+    try {
+        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+    } catch {
+        throw new Error("Not a git repository. Please run this command from within a git repository.");
+    }
+}
 
 export async function isWorktreeClean(worktreePath: string = "."): Promise<boolean> {
     try {
@@ -433,9 +485,24 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
         // Clean untracked files
         await execa("git", ["-C", cwd, "clean", "-fd"]);
 
+        // Record the dangling stash commit so an interrupted run can be recovered
+        try {
+            await writeFile(
+                await stashRecordPath(cwd),
+                JSON.stringify({ hash: stashHash, message: message ?? "", createdAt: new Date().toISOString() })
+            );
+        } catch (recordError: unknown) {
+            // Non-fatal: the stash succeeded and callers restore by hash
+            console.warn(
+                chalk.yellow("Could not record the stash for crash recovery:"),
+                recordError instanceof Error ? recordError.message : recordError
+            );
+        }
+
         return stashHash;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to stash changes:"), error.stderr || error.message);
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to stash changes:"), execaError.stderr || execaError.message);
         return null;
     }
 }
@@ -454,6 +521,12 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
     try {
         // Apply the specific stash by hash
         await execa("git", ["-C", cwd, "stash", "apply", stashHash]);
+
+        // Clear the crash-recovery record if it points at this stash
+        const record = await readStashRecord(cwd);
+        if (record?.hash === stashHash) {
+            await rm(await stashRecordPath(cwd), { force: true });
+        }
         return true;
     } catch (error: unknown) {
         const execaError = error as ExecaError; // execa rejects with ExecaError

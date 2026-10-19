@@ -1,22 +1,21 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
-import { getDefaultEditor, shouldSkipEditor, getGitProvider } from "../config.js";
+import { getGitProvider } from "../config.js";
 import {
-    isWorktreeClean,
-    isMainRepoBare,
     detectGitProvider,
     getWorktrees,
-    stashChanges,
-    applyAndDropStash,
     getUpstreamRemote,
+    validateGitRepo,
 } from "../utils/git.js";
+import { guardDirtyState } from "../utils/dirty.js";
+import type { DirtyStateGuard } from "../utils/dirty.js";
+import { openInEditor } from "../utils/editor.js";
 import { resolveWorktreePath } from "../utils/paths.js";
 import { runSetupScriptsSecure } from "../utils/setup.js";
 import { AtomicWorktreeOperation } from "../utils/atomic.js";
-import { handleDirtyState, selectPullRequest } from "../utils/tui.js";
+import { selectPullRequest } from "../utils/tui.js";
 import { withSpinner } from "../utils/spinner.js";
-import { onShutdown } from "../utils/shutdown.js";
 
 type GitProvider = 'gh' | 'glab';
 
@@ -242,12 +241,11 @@ export async function prWorktreeHandler(
     prNumber?: string,
     options: { path?: string; install?: string; editor?: string; setup?: boolean; trust?: boolean } = {}
 ) {
-    let stashHash: string | null = null;
-    let unregisterShutdown: (() => void) | null = null;
+    let guard: DirtyStateGuard | undefined;
 
     try {
         // 1. Validate we're in a git repo
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
         // 2. Determine git provider (from config or auto-detect)
         let provider = getGitProvider();
@@ -270,41 +268,8 @@ export async function prWorktreeHandler(
             prNumber = selectedPR;
         }
 
-        // 4. Check if main worktree is clean (Improvement #5)
-        const isBare = await isMainRepoBare();
-
-        if (!isBare) {
-            console.log(chalk.blue("Checking if main worktree is clean..."));
-            const isClean = await isWorktreeClean(".");
-
-            if (!isClean) {
-                const action = await handleDirtyState(
-                    `Your main worktree has uncommitted changes.`
-                );
-
-                if (action === 'abort') {
-                    console.log(chalk.yellow("Operation cancelled."));
-                    process.exit(0);
-                } else if (action === 'stash') {
-                    console.log(chalk.blue("Stashing your changes..."));
-                    stashHash = await stashChanges(".", `wt-pr: Before creating worktree for ${requestType} #${prNumber}`);
-                    if (stashHash) {
-                        console.log(chalk.green("Changes stashed successfully."));
-                        // Register SIGINT handler to restore stash if interrupted
-                        unregisterShutdown = onShutdown(async () => {
-                            if (stashHash) {
-                                console.log(chalk.blue("Restoring stashed changes due to interruption..."));
-                                await applyAndDropStash(stashHash, ".");
-                            }
-                        });
-                    }
-                } else {
-                    console.log(chalk.yellow("Proceeding with uncommitted changes..."));
-                }
-            } else {
-                console.log(chalk.green("Main worktree is clean."));
-            }
-        }
+        // 4. Protect uncommitted changes in the main worktree (stash/restore)
+        guard = await guardDirtyState(`wt-pr: Before creating worktree for ${requestType} #${prNumber}`);
 
         // 5. Get the target branch name from the PR/MR
         console.log(chalk.blue(`Fetching branch name for ${requestType} #${prNumber}...`));
@@ -396,19 +361,9 @@ export async function prWorktreeHandler(
         }
 
         // 12. Open in editor
-        const configuredEditor = getDefaultEditor();
-        const editorCommand = options.editor || configuredEditor;
-
-        if (shouldSkipEditor(editorCommand)) {
-            console.log(chalk.gray(`Editor set to 'none', skipping editor open.`));
-        } else {
-            console.log(chalk.blue(`Opening ${resolvedPath} in ${editorCommand}...`));
-            try {
-                await execa(editorCommand, [resolvedPath], { stdio: "ignore", detached: true });
-            } catch (editorError) {
-                console.error(chalk.red(`Failed to open editor "${editorCommand}". Please ensure it's installed and in your PATH.`));
-                console.warn(chalk.yellow(`Worktree is ready at ${resolvedPath}. You can open it manually.`));
-            }
+        const outcome = await openInEditor(resolvedPath, options.editor);
+        if (outcome === "failed") {
+            console.warn(chalk.yellow(`Worktree is ready at ${resolvedPath}. You can open it manually.`));
         }
 
         console.log(chalk.green(`Worktree for ${requestType} #${prNumber} (${prBranchName}) ${worktreeCreated ? "created" : "found"} at ${resolvedPath}.`));
@@ -417,22 +372,13 @@ export async function prWorktreeHandler(
         }
         console.log(chalk.green(`Ready for work. Use 'git push' inside the worktree directory to update the ${requestType}.`));
 
-    } catch (error: any) {
-        console.error(chalk.red(`Failed to set up worktree from ${prNumber ? `PR/MR #${prNumber}` : 'PR/MR'}:`), error.message || error);
+    } catch (error: unknown) {
+        console.error(
+            chalk.red(`Failed to set up worktree from ${prNumber ? `PR/MR #${prNumber}` : 'PR/MR'}:`),
+            error instanceof Error ? error.message : error
+        );
         process.exitCode = 1;
     } finally {
-        // Unregister shutdown handler
-        if (unregisterShutdown) {
-            unregisterShutdown();
-        }
-
-        // Restore stashed changes if we stashed them
-        if (stashHash) {
-            console.log(chalk.blue("Restoring your stashed changes..."));
-            const restored = await applyAndDropStash(stashHash, ".");
-            if (restored) {
-                console.log(chalk.green("Changes restored successfully."));
-            }
-        }
+        await guard?.finish();
     }
 }

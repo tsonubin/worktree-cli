@@ -1,8 +1,7 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat, rm } from "node:fs/promises";
-import { resolve } from "node:path";
-import { getWorktrees, findWorktreeByBranch, findWorktreeByPath, WorktreeInfo } from "../utils/git.js";
+import { findWorktreeByBranch, findWorktreeByPath, validateGitRepo, WorktreeInfo } from "../utils/git.js";
 import { selectWorktree, confirm } from "../utils/tui.js";
 import { withSpinner } from "../utils/spinner.js";
 
@@ -11,7 +10,7 @@ export async function removeWorktreeHandler(
     options: { force?: boolean }
 ) {
     try {
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
         let targetWorktree: WorktreeInfo | null = null;
 

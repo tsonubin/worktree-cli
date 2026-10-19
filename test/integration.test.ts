@@ -255,6 +255,28 @@ describe('wt new', () => {
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
+
+    it('should warn about un-restored stashes from previous runs', async () => {
+        // Simulate a crashed run that stashed changes and never restored them
+        await writeFile(
+            join(ctx.repoDir, '.git', 'wt-stash.json'),
+            JSON.stringify({ hash: 'deadbeefcafe', message: 'test', createdAt: '2026-10-19' })
+        );
+
+        const worktreePath = join(ctx.testDir, 'stash-warning');
+        const result = await runCli(
+            ['new', 'feature/stash-warning', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toContain('deadbeefcafe');
+        expect(result.stderr).toContain('git stash apply');
+
+        // Cleanup
+        await rm(join(ctx.repoDir, '.git', 'wt-stash.json'), { force: true });
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
 });
 
 describe('wt --version', () => {
@@ -366,6 +388,30 @@ describe('Atomic Operations', () => {
         const worktreeExists = await stat(worktreePath).then(() => true).catch(() => false);
         // Note: The current implementation might not fully rollback, this tests the expected behavior
         // expect(worktreeExists).toBe(false);
+    });
+});
+
+describe('Command argument validation', () => {
+    let ctx: TestContext;
+
+    beforeAll(async () => {
+        ctx = await createTestRepo();
+    });
+
+    afterAll(async () => {
+        await ctx.cleanup();
+    });
+
+    it('wt setup should require a branch name', async () => {
+        const result = await runCli(['setup'], ctx.repoDir);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('Branch name is required');
+    });
+
+    it('wt merge should refuse to merge a branch into itself', async () => {
+        const result = await runCli(['merge', 'main'], ctx.repoDir);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('into itself');
     });
 });
 

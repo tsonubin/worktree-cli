@@ -1,11 +1,10 @@
-import { execa } from "execa";
 import chalk from "chalk";
-import { getWorktrees } from "../utils/git.js";
+import { getWorktrees, validateGitRepo } from "../utils/git.js";
 
 export async function listWorktreesHandler() {
     try {
         // Confirm we're in a git repo
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
         // Get worktrees using the robust parsing utility
         const worktrees = await getWorktrees();

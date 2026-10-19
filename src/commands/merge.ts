@@ -1,8 +1,7 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat, rm } from "node:fs/promises";
-import { resolve } from "node:path";
-import { isMainRepoBare, isWorktreeClean } from "../utils/git.js";
+import { isMainRepoBare, isWorktreeClean, validateGitRepo } from "../utils/git.js";
 import { withSpinner } from "../utils/spinner.js";
 
 export async function mergeWorktreeHandler(
@@ -16,12 +15,18 @@ export async function mergeWorktreeHandler(
 ) {
     try {
         // Validate that we're in a git repository
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
         // Get the current branch name (the target for merging)
         const { stdout: currentBranch } = await execa("git", ["branch", "--show-current"]);
         if (!currentBranch) {
             console.error(chalk.red("Failed to determine the current branch."));
+            process.exit(1);
+        }
+
+        if (branchName === currentBranch) {
+            console.error(chalk.red(`Error: Cannot merge branch "${branchName}" into itself.`));
+            console.error(chalk.yellow("Run 'wt merge <branchName>' from the worktree that should receive the merge."));
             process.exit(1);
         }
 
@@ -84,13 +89,22 @@ export async function mergeWorktreeHandler(
         }
 
         // Step 3: Merge the target branch into the current branch
-        await withSpinner(
-            `Merging branch "${branchName}" into "${currentBranch}"...`,
-            async () => {
-                await execa("git", ["merge", branchName]);
-            },
-            `Merged branch "${branchName}" into "${currentBranch}".`
-        );
+        try {
+            await withSpinner(
+                `Merging branch "${branchName}" into "${currentBranch}"...`,
+                async () => {
+                    await execa("git", ["merge", branchName]);
+                },
+                `Merged branch "${branchName}" into "${currentBranch}".`
+            );
+        } catch (mergeError) {
+            console.error(
+                chalk.yellow(
+                    `If conflicts were reported, resolve them and run 'git merge --continue', or run 'git merge --abort' to cancel.`
+                )
+            );
+            throw mergeError;
+        }
 
         // Step 4: Remove the worktree if --remove flag is set
         if (options.remove) {
