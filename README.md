@@ -17,6 +17,9 @@ A CLI tool for managing Git worktrees with a focus on opening them in the Cursor
 pnpm install -g @johnlindquist/worktree
 ```
 
+Requires git 2.36+ (uses NUL-terminated `git worktree list` output to handle worktree
+paths containing unusual characters safely).
+
 ## Usage
 
 ### Non-interactive use (CI)
