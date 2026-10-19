@@ -42,9 +42,10 @@ const config = new Conf<ConfigSchema>({
     schema,
 });
 
-// Function to get the default editor
+// Function to get the default editor (WT_EDITOR env var overrides the stored config,
+// e.g. WT_EDITOR=none to suppress editor launches in CI/tests)
 export function getDefaultEditor(): string {
-    return config.get('defaultEditor');
+    return process.env.WT_EDITOR || config.get('defaultEditor');
 }
 
 // Function to set the default editor

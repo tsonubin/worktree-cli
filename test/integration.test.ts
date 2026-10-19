@@ -242,6 +242,19 @@ describe('wt new', () => {
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
+
+    it('should skip the editor when WT_EDITOR is set to none', async () => {
+        const worktreePath = join(ctx.testDir, 'env-editor');
+
+        // No --editor flag: the WT_EDITOR=none env set by runCli must suppress the editor
+        const result = await runCli(['new', 'feature/env-editor', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('skipping editor open');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
 });
 
 describe('wt --version', () => {
