@@ -58,7 +58,8 @@ wt new feature/vscode -e code
 - **Abort**: Cancel the operation
 - **Continue anyway**: Proceed with uncommitted changes
 
-Stashed changes are restored even if the command fails afterwards. If a run is
+Stashed changes are restored even if the command fails afterwards, including their
+index state (untracked files return untracked, not staged). If a run is
 killed before restoring, the next `wt` command warns and prints the exact
 `git stash apply <hash>` recovery command.
 
@@ -134,6 +135,9 @@ wt pr 123 --setup
 wt open [pathOrBranch]
 ```
 
+Options:
+- `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
+
 **Interactive Selection**: Run `wt open` without arguments to see a fuzzy-searchable list of worktrees.
 
 Example:
@@ -186,6 +190,12 @@ Interactive multi-select interface to remove multiple worktrees at once. The mai
 ```bash
 wt extract [branchName] [options]
 ```
+
+Options:
+- `-p, --path <path>`: Specify a custom path for the worktree
+- `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
+- `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Extracts the current (or specified) branch into a separate worktree, useful when you want to continue working on a branch in isolation.
 
