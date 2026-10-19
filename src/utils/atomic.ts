@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { rm, stat } from "node:fs/promises";
+import { findWorktreeByBranch } from "./git.js";
 import { createSpinner } from "./spinner.js";
 
 type RollbackAction = () => Promise<void>;
@@ -34,6 +35,16 @@ export class AtomicWorktreeOperation {
      * @param createBranch - Whether to create a new branch with -b flag
      */
     async createWorktree(path: string, branch: string, createBranch: boolean = false): Promise<void> {
+        // Git allows each branch in only one worktree; surface this as guidance
+        // instead of a raw `git worktree add` failure
+        const existing = await findWorktreeByBranch(branch);
+        if (existing) {
+            throw new Error(
+                `Branch "${branch}" is already checked out at ${existing.path}. ` +
+                `A branch can only be checked out in one worktree. Use 'wt open ${branch}' to open the existing one.`
+            );
+        }
+
         const args = ["worktree", "add"];
         if (createBranch) {
             args.push("-b", branch);

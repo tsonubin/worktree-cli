@@ -12,6 +12,9 @@ interface StashRecord {
     hash: string;
     message: string;
     createdAt: string;
+    /** Paths that were untracked or unstaged before stashing and must be
+     *  returned to that index state after the stash is applied */
+    resetPaths?: string[];
 }
 
 async function stashRecordPath(cwd: string): Promise<string> {
@@ -33,6 +36,12 @@ export async function readStashRecord(cwd: string = "."): Promise<StashRecord | 
                 hash: parsed.hash,
                 message: "message" in parsed && typeof parsed.message === "string" ? parsed.message : "",
                 createdAt: "createdAt" in parsed && typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+                resetPaths:
+                    "resetPaths" in parsed &&
+                    Array.isArray(parsed.resetPaths) &&
+                    parsed.resetPaths.every(entry => typeof entry === "string")
+                        ? parsed.resetPaths
+                        : [],
             };
         }
         return null;
@@ -457,11 +466,24 @@ export async function getRepoName(cwd: string = "."): Promise<string> {
  */
 export async function stashChanges(cwd: string = ".", message?: string): Promise<string | null> {
     try {
-        // First check if there are any changes to stash
-        const { stdout: statusOutput } = await execa("git", ["-C", cwd, "status", "--porcelain"]);
+        // First check if there are any changes to stash, noting which paths were
+        // untracked or unstaged so the restore can return them to that state
+        // (`stash apply` stages everything otherwise)
+        const { stdout: statusOutput } = await execa("git", ["-C", cwd, "status", "--porcelain", "-z"]);
         if (!statusOutput.trim()) {
             // No changes to stash
             return null;
+        }
+        const resetPaths: string[] = [];
+        for (const entry of statusOutput.split("\0")) {
+            if (entry.length < 4) {
+                continue;
+            }
+            const x = entry[0];
+            const y = entry[1];
+            if (x === "?" || (x === " " && y !== " ")) {
+                resetPaths.push(entry.substring(3));
+            }
         }
 
         // Add untracked files to the index temporarily so they're included in the stash
@@ -490,7 +512,7 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
         try {
             await writeFile(
                 await stashRecordPath(cwd),
-                JSON.stringify({ hash: stashHash, message: message ?? "", createdAt: new Date().toISOString() })
+                JSON.stringify({ hash: stashHash, message: message ?? "", createdAt: new Date().toISOString(), resetPaths })
             );
         } catch (recordError: unknown) {
             // Non-fatal: the stash succeeded and callers restore by hash
@@ -526,6 +548,15 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
         // Clear the crash-recovery record if it points at this stash
         const record = await readStashRecord(cwd);
         if (record?.hash === stashHash) {
+            // Best-effort: return untracked/unstaged paths to their pre-stash index
+            // state (content is restored either way; only the index differs)
+            if (record.resetPaths?.length) {
+                try {
+                    await execa("git", ["-C", cwd, "reset", "-q", "--", ...record.resetPaths]);
+                } catch {
+                    // Leave the paths staged rather than failing the restore
+                }
+            }
             await rm(await stashRecordPath(cwd), { force: true });
         }
         return true;

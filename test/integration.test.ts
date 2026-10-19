@@ -308,9 +308,26 @@ describe('wt new', () => {
         expect(result.stdout).toContain('Restoring your stashed changes...');
         expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
 
+        // The untracked file must come back untracked, not silently staged
+        const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: ctx.repoDir });
+        expect(status).toContain('?? dirty.txt');
+
         // Cleanup
         await rm(dirtyFile, { force: true });
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should fail with guidance when the branch is already checked out', async () => {
+        const worktreePath = join(ctx.testDir, 'colliding-branch');
+        const result = await runCli(['new', 'main', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('already checked out');
+        expect(result.stderr).toContain('wt open main');
+
+        // Nothing should have been created
+        const worktreeExists = await stat(worktreePath).then(() => true).catch(() => false);
+        expect(worktreeExists).toBe(false);
     });
 });
 
