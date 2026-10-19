@@ -19,6 +19,19 @@ pnpm install -g @johnlindquist/worktree
 
 ## Usage
 
+### Non-interactive use (CI)
+
+Without a terminal, prompts are never shown — commands either run directly or fail with
+guidance (they never hang on a prompt or fake success):
+
+- `wt new` / `wt setup` / `wt extract` / `wt pr`: pass `--stash` to stash uncommitted
+  changes in the main worktree and restore them after; without it, a dirty main worktree
+  is an error.
+- Setup scripts (`wt setup`, `wt pr --setup`) need `--trust` to execute without
+  confirmation.
+- `wt remove` and `wt open` need a `<pathOrBranch>` argument, `wt pr` needs a
+  `<prNumber>`, and `wt purge` requires an interactive terminal.
+
 ### Create a new worktree from Branch Name
 
 ```bash
@@ -26,9 +39,10 @@ wt new <branchName> [options]
 ```
 Options:
 - `-p, --path <path>`: Specify a custom path for the worktree
-- `-c, --checkout`: Create new branch if it doesn't exist and checkout automatically
+- `-c, --checkout`: Deprecated: new branches are created automatically when needed
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
@@ -62,10 +76,11 @@ Creates a new worktree and automatically runs setup commands from `worktrees.jso
 
 Options:
 - `-p, --path <path>`: Specify a custom path for the worktree
-- `-c, --checkout`: Create new branch if it doesn't exist and checkout automatically
+- `-c, --checkout`: Deprecated: new branches are created automatically when needed
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `-t, --trust`: Trust and run setup commands without confirmation (for CI environments)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
@@ -95,6 +110,8 @@ Options:
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `-s, --setup`: Run setup scripts from `worktrees.json` or `.cursor/worktrees.json`
+- `-t, --trust`: Trust and execute setup scripts without confirmation (use with caution)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
