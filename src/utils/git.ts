@@ -1,7 +1,7 @@
 import { execa, ExecaError } from "execa";
 import chalk from "chalk";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Record of stashed changes that have not been restored yet.
@@ -16,7 +16,8 @@ interface StashRecord {
 
 async function stashRecordPath(cwd: string): Promise<string> {
     const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--git-common-dir"]);
-    return join(stdout.trim(), "wt-stash.json");
+    // --git-common-dir may be relative to the target cwd, not the process cwd
+    return join(resolve(cwd, stdout.trim()), "wt-stash.json");
 }
 
 /**
