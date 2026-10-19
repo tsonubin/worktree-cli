@@ -48,9 +48,8 @@ jobs:
       - name: List build contents
         run: ls -lR build
 
-      # Optional: Add a test step here if you have tests
-      # - name: Test
-      #   run: pnpm test
+      - name: Test
+        run: pnpm exec vitest run
 
       - name: Configure Git
         run: |
