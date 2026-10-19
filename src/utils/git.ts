@@ -303,26 +303,30 @@ export interface WorktreeInfo {
  * - Detached HEAD states
  * - Locked worktrees (with optional reason)
  * - Prunable (stale) worktrees
+ * - Paths and reasons containing unsafe bytes (newlines, quotes)
  *
  * @param cwd - Working directory to run git command from
- * @returns Array of WorktreeInfo objects sorted by path
+ * @returns Array of WorktreeInfo objects in git's order (main worktree first)
  */
 export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
     try {
-        const { stdout } = await execa("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
+        // -z keeps paths and lock/reason values with unsafe bytes (newlines,
+        // quotes, ...) unquoted inside NUL-terminated fields; git 2.36+
+        // documents this as the workaround for unreliable c-quoting in the
+        // plain porcelain output
+        const { stdout } = await execa("git", ["-C", cwd, "worktree", "list", "--porcelain", "-z"]);
 
         if (!stdout.trim()) {
             return [];
         }
 
-        // Split by double newline to get individual worktree blocks
-        // The porcelain format separates worktrees with blank lines
-        const blocks = stdout.split('\n\n').filter(block => block.trim());
+        // Records are separated by an empty NUL-terminated field
+        const blocks = stdout.split('\0\0').filter(block => block.length > 0);
         const worktrees: WorktreeInfo[] = [];
         let isFirstWorktree = true;
 
         for (const block of blocks) {
-            const lines = block.split('\n');
+            const fields = block.split('\0');
             const info: WorktreeInfo = {
                 path: '',
                 head: '',
@@ -334,29 +338,29 @@ export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
                 bare: false,
             };
 
-            for (const line of lines) {
-                if (line.startsWith('worktree ')) {
-                    info.path = line.substring('worktree '.length);
-                } else if (line.startsWith('HEAD ')) {
-                    info.head = line.substring('HEAD '.length);
-                } else if (line.startsWith('branch ')) {
+            for (const field of fields) {
+                if (field.startsWith('worktree ')) {
+                    info.path = field.substring('worktree '.length);
+                } else if (field.startsWith('HEAD ')) {
+                    info.head = field.substring('HEAD '.length);
+                } else if (field.startsWith('branch ')) {
                     // Convert refs/heads/branch-name to branch-name
-                    const fullRef = line.substring('branch '.length);
+                    const fullRef = field.substring('branch '.length);
                     info.branch = fullRef.replace('refs/heads/', '');
-                } else if (line === 'detached') {
+                } else if (field === 'detached') {
                     info.detached = true;
-                } else if (line === 'bare') {
+                } else if (field === 'bare') {
                     info.bare = true;
-                } else if (line === 'locked') {
+                } else if (field === 'locked') {
                     info.locked = true;
-                } else if (line.startsWith('locked ')) {
+                } else if (field.startsWith('locked ')) {
                     info.locked = true;
-                    info.lockReason = line.substring('locked '.length);
-                } else if (line === 'prunable') {
+                    info.lockReason = field.substring('locked '.length);
+                } else if (field === 'prunable') {
                     info.prunable = true;
-                } else if (line.startsWith('prunable ')) {
+                } else if (field.startsWith('prunable ')) {
                     info.prunable = true;
-                    info.pruneReason = line.substring('prunable '.length);
+                    info.pruneReason = field.substring('prunable '.length);
                 }
             }
 
@@ -367,8 +371,9 @@ export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
         }
 
         return worktrees;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to list worktrees:"), error.stderr || error.message);
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to list worktrees:"), execaError.stderr || execaError.message);
         return [];
     }
 }

@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { findWorktreeByPath, getWorktrees } from '../src/utils/git.js';
 
 /**
  * Tests for git utility functions
@@ -69,6 +70,21 @@ describe('getWorktrees', () => {
 
         expect(featureWt).toBeDefined();
         expect(featureWt?.path).toContain('feature-wt');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', wtPath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should handle worktree paths with newlines and quotes', async () => {
+        const wtPath = join(ctx.testDir, 'weird"\nname');
+        await execa('git', ['worktree', 'add', '-b', 'weirdtest', wtPath], { cwd: ctx.repoDir });
+
+        const worktrees = await getWorktrees(ctx.repoDir);
+        const weird = worktrees.find(wt => wt.branch === 'weirdtest');
+        expect(weird?.path).toBe(wtPath);
+
+        const byPath = await findWorktreeByPath(wtPath, ctx.repoDir);
+        expect(byPath?.branch).toBe('weirdtest');
 
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', wtPath], { cwd: ctx.repoDir }).catch(() => {});

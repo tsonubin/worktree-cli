@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat, rm } from "node:fs/promises";
-import { isMainRepoBare, isWorktreeClean, validateGitRepo } from "../utils/git.js";
+import { findWorktreeByBranch, isMainRepoBare, isWorktreeClean, validateGitRepo } from "../utils/git.js";
 import { withSpinner } from "../utils/spinner.js";
 
 export async function mergeWorktreeHandler(
@@ -30,28 +30,13 @@ export async function mergeWorktreeHandler(
             process.exit(1);
         }
 
-        // Parse worktree list to find the worktree for the target branch
-        const { stdout } = await execa("git", ["worktree", "list", "--porcelain"]);
-        let targetPath = "";
-        let tempPath = "";
-        const lines = stdout.split("\n");
-        for (const line of lines) {
-            if (line.startsWith("worktree ")) {
-                tempPath = line.replace("worktree ", "").trim();
-            } else if (line.startsWith("branch ")) {
-                const fullBranchRef = line.replace("branch ", "").trim();
-                const shortBranch = fullBranchRef.replace("refs/heads/", "");
-                if (shortBranch === branchName) {
-                    targetPath = tempPath;
-                    break;
-                }
-            }
-        }
-
-        if (!targetPath) {
+        // Find the worktree for the target branch
+        const target = await findWorktreeByBranch(branchName);
+        if (!target) {
             console.error(chalk.red(`Could not find a worktree for branch "${branchName}".`));
             process.exit(1);
         }
+        const targetPath = target.path;
 
         console.log(
             chalk.blue(
