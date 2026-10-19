@@ -181,25 +181,6 @@ describe('isWorktreeClean', () => {
     });
 });
 
-describe('getCurrentBranch', () => {
-    let ctx: TestContext;
-
-    beforeAll(async () => {
-        ctx = await createTestRepo();
-    });
-
-    afterAll(async () => {
-        await ctx.cleanup();
-    });
-
-    it('should return current branch name', async () => {
-        const { getCurrentBranch } = await import('../src/utils/git.js');
-
-        const branch = await getCurrentBranch(ctx.repoDir);
-        expect(branch).toBe('main');
-    });
-});
-
 describe('getRepoRoot', () => {
     let ctx: TestContext;
 
@@ -239,7 +220,7 @@ describe('getRepoName', () => {
     });
 });
 
-describe('stashChanges and popStash', () => {
+describe('stashChanges and applyAndDropStash', () => {
     let ctx: TestContext;
 
     beforeAll(async () => {
@@ -250,7 +231,7 @@ describe('stashChanges and popStash', () => {
         await ctx.cleanup();
     });
 
-    it('should stash and pop changes', async () => {
+    it('should stash and reapply changes', async () => {
         const { stashChanges, applyAndDropStash, isWorktreeClean } = await import('../src/utils/git.js');
 
         // Make changes

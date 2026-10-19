@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveWorktreeName, getShortBranchName, validateBranchName } from '../src/utils/paths.js';
+import { resolveWorktreeName, validateBranchName } from '../src/utils/paths.js';
 
 describe('Path Utilities', () => {
     describe('resolveWorktreeName', () => {
@@ -21,24 +21,6 @@ describe('Path Utilities', () => {
             expect(featureAuth).not.toBe(hotfixAuth);
             expect(featureAuth).toBe('feature-auth');
             expect(hotfixAuth).toBe('hotfix-auth');
-        });
-    });
-
-    describe('getShortBranchName', () => {
-        it('should return the last segment of a branch name', () => {
-            expect(getShortBranchName('feature/auth')).toBe('auth');
-            expect(getShortBranchName('hotfix/urgent-fix')).toBe('urgent-fix');
-            expect(getShortBranchName('user/john/feature')).toBe('feature');
-        });
-
-        it('should handle branch names without slashes', () => {
-            expect(getShortBranchName('main')).toBe('main');
-            expect(getShortBranchName('develop')).toBe('develop');
-        });
-
-        it('should handle empty segments', () => {
-            expect(getShortBranchName('feature//auth')).toBe('auth');
-            expect(getShortBranchName('/leading-slash')).toBe('leading-slash');
         });
     });
 

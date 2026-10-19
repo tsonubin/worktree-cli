@@ -22,20 +22,6 @@ export function resolveWorktreeName(branchName: string): string {
     return branchName.replace(/\//g, '-');
 }
 
-/**
- * Get the short branch name (last segment)
- *
- * Use this only when you specifically need the last segment.
- * For worktree directory names, prefer resolveWorktreeName().
- *
- * @param branchName - The branch name
- * @returns Last segment of the branch name
- */
-export function getShortBranchName(branchName: string): string {
-    const parts = branchName.split('/').filter(part => part.length > 0);
-    return parts.pop() || branchName;
-}
-
 export interface ResolveWorktreePathOptions {
     /** Override the folder name completely */
     customPath?: string;

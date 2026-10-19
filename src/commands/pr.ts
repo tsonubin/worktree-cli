@@ -1,7 +1,6 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
-import { resolve, join } from "node:path";
 import { getDefaultEditor, shouldSkipEditor, getGitProvider } from "../config.js";
 import {
     isWorktreeClean,

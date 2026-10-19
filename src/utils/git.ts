@@ -1,17 +1,6 @@
 import { execa, ExecaError } from "execa";
 import chalk from "chalk";
 
-export async function getCurrentBranch(cwd: string = "."): Promise<string | null> {
-    try {
-        const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
-        return stdout.trim();
-    } catch (error) {
-        // Handle case where HEAD is detached or not in a git repo
-        console.error(chalk.yellow("Could not determine current branch."), error);
-        return null;
-    }
-}
-
 export async function isWorktreeClean(worktreePath: string = "."): Promise<boolean> {
     try {
         // Use --porcelain to get easily parsable output.
@@ -88,35 +77,19 @@ export async function isMainRepoBare(cwd: string = '.'): Promise<boolean> {
  */
 export async function getUpstreamRemote(cwd: string = "."): Promise<string> {
     try {
-        // Strategy 1: Try to get the remote from the main branch's tracking information
+        // Strategy 1: Try to get the remote from the main/master branch's tracking information
         // This handles cases where main is tracking upstream/main instead of origin/main
-        try {
-            const { stdout: mainBranch } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "main@{upstream}"], {
+        for (const candidate of ["main", "master"]) {
+            const { stdout: upstreamRef } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", `${candidate}@{upstream}`], {
                 reject: false,
             });
 
-            if (mainBranch && mainBranch.trim()) {
+            if (upstreamRef.trim()) {
                 // Extract remote name from refs/remotes/upstream/main -> upstream
-                const match = mainBranch.trim().match(/^([^\/]+)\//);
+                const match = upstreamRef.trim().match(/^([^\/]+)\//);
                 if (match && match[1]) {
                     return match[1];
                 }
-            }
-        } catch {
-            // main branch doesn't have upstream tracking, try master
-            try {
-                const { stdout: masterBranch } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "master@{upstream}"], {
-                    reject: false,
-                });
-
-                if (masterBranch && masterBranch.trim()) {
-                    const match = masterBranch.trim().match(/^([^\/]+)\//);
-                    if (match && match[1]) {
-                        return match[1];
-                    }
-                }
-            } catch {
-                // Neither main nor master have upstream tracking
             }
         }
 
@@ -486,23 +459,6 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
         const execaError = error as ExecaError; // execa rejects with ExecaError
         console.error(chalk.red("Failed to apply stash:"), execaError.stderr || execaError.message);
         console.error(chalk.yellow(`Your changes are preserved in commit ${stashHash}. Recover them with: git stash apply ${stashHash}`));
-        return false;
-    }
-}
-
-/**
- * Pop the most recent stash
- * @deprecated Use applyAndDropStash with a specific hash instead to prevent race conditions
- *
- * @param cwd - Working directory
- * @returns true if stash was popped successfully
- */
-export async function popStash(cwd: string = "."): Promise<boolean> {
-    try {
-        await execa("git", ["-C", cwd, "stash", "pop"]);
-        return true;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to pop stash:"), error.stderr || error.message);
         return false;
     }
 }

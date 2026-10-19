@@ -133,33 +133,3 @@ export function getShutdownManager(): ShutdownManager {
 export function onShutdown(handler: CleanupHandler): () => void {
     return getShutdownManager().register(handler);
 }
-
-/**
- * Higher-order function to wrap an async operation with automatic cleanup on SIGINT
- *
- * @param operation - The async operation to perform
- * @param cleanup - Cleanup function to run if interrupted
- * @returns Result of the operation
- *
- * @example
- * const result = await withCleanup(
- *   async () => {
- *     await createWorktree(path, branch);
- *     return path;
- *   },
- *   async () => {
- *     await removeWorktree(path);
- *   }
- * );
- */
-export async function withCleanup<T>(
-    operation: () => Promise<T>,
-    cleanup: CleanupHandler
-): Promise<T> {
-    const unregister = onShutdown(cleanup);
-    try {
-        return await operation();
-    } finally {
-        unregister();
-    }
-}
