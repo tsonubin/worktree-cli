@@ -9,6 +9,7 @@ import { removeWorktreeHandler } from "./commands/remove.js";
 import { mergeWorktreeHandler } from "./commands/merge.js";
 import { purgeWorktreesHandler } from "./commands/purge.js";
 import { configHandler } from "./commands/config.js";
+import { packageVersion } from "./config.js";
 import { prWorktreeHandler } from "./commands/pr.js";
 import { openWorktreeHandler } from "./commands/open.js";
 import { extractWorktreeHandler } from "./commands/extract.js";
@@ -18,7 +19,7 @@ const program = new Command();
 program
   .name("wt")
   .description("Manage git worktrees and open them in the Cursor editor.")
-  .version("1.0.0");
+  .version(packageVersion);
 
 program
   .command("new")

@@ -9,6 +9,9 @@ const packageJsonPath = path.resolve(__dirname, '../package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 const packageName = packageJson.name;
 
+// Package version for `wt --version` (semantic-release rewrites it at publish time)
+export const packageVersion = packageJson.version;
+
 // Define the structure of the configuration
 interface ConfigSchema {
     defaultEditor: string;

@@ -244,6 +244,17 @@ describe('wt new', () => {
     });
 });
 
+describe('wt --version', () => {
+    it('should report the package.json version', async () => {
+        const packageJson = JSON.parse(
+            await readFile(resolve(__dirname, '../package.json'), 'utf-8')
+        );
+        const result = await runCli(['--version'], process.cwd());
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe(packageJson.version);
+    });
+});
+
 describe('wt remove', () => {
     let ctx: TestContext;
 
