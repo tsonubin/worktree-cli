@@ -25,7 +25,8 @@ type GitProvider = 'gh' | 'glab';
  * Extract repository owner and name from git remote URL
  */
 async function getRepoInfo(): Promise<{ owner: string; repo: string }> {
-    const { stdout } = await execa("git", ["config", "--get", "remote.origin.url"]);
+    const remote = await getUpstreamRemote();
+    const { stdout } = await execa("git", ["remote", "get-url", remote]);
     const remoteUrl = stdout.trim();
 
     // Match patterns like:
