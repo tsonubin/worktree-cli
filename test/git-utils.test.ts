@@ -280,6 +280,28 @@ describe('stashChanges and applyAndDropStash', () => {
         await rm(join(ctx.repoDir, 'stash-test.txt')).catch(() => {});
     });
 
+    it('should restore the original staged and unstaged split', async () => {
+        const { stashChanges, applyAndDropStash } = await import('../src/utils/git.js');
+        const readmePath = join(ctx.repoDir, 'README.md');
+
+        try {
+            await writeFile(readmePath, 'staged content\n');
+            await execa('git', ['add', 'README.md'], { cwd: ctx.repoDir });
+            await writeFile(readmePath, 'unstaged content\n');
+
+            const stashHash = await stashChanges(ctx.repoDir, 'index fidelity');
+            expect(stashHash).not.toBeNull();
+            expect(await applyAndDropStash(stashHash!, ctx.repoDir)).toBe(true);
+
+            const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: ctx.repoDir });
+            expect(status).toContain('MM README.md');
+            const { stdout: stagedContent } = await execa('git', ['show', ':README.md'], { cwd: ctx.repoDir });
+            expect(stagedContent).toBe('staged content');
+        } finally {
+            await execa('git', ['reset', '--hard', 'HEAD'], { cwd: ctx.repoDir }).catch(() => {});
+        }
+    });
+
     it('should return null when nothing to stash', async () => {
         const { stashChanges, isWorktreeClean } = await import('../src/utils/git.js');
 

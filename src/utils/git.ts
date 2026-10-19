@@ -12,6 +12,8 @@ interface StashRecord {
     hash: string;
     message: string;
     createdAt: string;
+    /** Commit whose tree represents the index before the stash was created. */
+    indexCommit?: string;
     /** Paths that were untracked or unstaged before stashing and must be
      *  returned to that index state after the stash is applied */
     resetPaths?: string[];
@@ -36,6 +38,7 @@ export async function readStashRecord(cwd: string = "."): Promise<StashRecord | 
                 hash: parsed.hash,
                 message: "message" in parsed && typeof parsed.message === "string" ? parsed.message : "",
                 createdAt: "createdAt" in parsed && typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+                indexCommit: "indexCommit" in parsed && typeof parsed.indexCommit === "string" ? parsed.indexCommit : undefined,
                 resetPaths:
                     "resetPaths" in parsed &&
                     Array.isArray(parsed.resetPaths) &&
@@ -461,8 +464,8 @@ export async function getRepoName(cwd: string = "."): Promise<string> {
 }
 
 /**
- * Stash changes in the current worktree using git stash create
- * This creates a unique, identifiable stash commit and returns its hash
+ * Stash changes in the current worktree using Git commit/tree plumbing.
+ * This creates a unique, identifiable dangling commit and returns its hash
  * to prevent race conditions with concurrent operations.
  *
  * @param cwd - Working directory
@@ -491,33 +494,63 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
             }
         }
 
-        // Add untracked files to the index temporarily so they're included in the stash
-        await execa("git", ["-C", cwd, "add", "-A"]);
+        // Save the original index as the second parent of the custom stash
+        // commit. Applying that parent later restores staged/unstaged splits.
+        const { stdout: headOutput } = await execa("git", ["-C", cwd, "rev-parse", "HEAD"]);
+        const { stdout: indexTreeOutput } = await execa("git", ["-C", cwd, "write-tree"]);
+        const { stdout: indexCommitOutput } = await execa(
+            "git",
+            [
+                "-C",
+                cwd,
+                "commit-tree",
+                indexTreeOutput.trim(),
+                "-p",
+                headOutput.trim(),
+                "-m",
+                "wt index snapshot",
+            ]
+        );
 
-        // Create a stash commit and get its hash
-        const args = ["stash", "create"];
-        if (message) {
-            args.push(message);
-        }
-        const { stdout } = await execa("git", ["-C", cwd, ...args]);
-        const stashHash = stdout.trim();
+        // Add untracked files to the index temporarily so they're included in
+        // the stash tree, then create a stash-shaped commit whose second
+        // parent is the original index snapshot.
+        await execa("git", ["-C", cwd, "add", "-A"]);
+        const { stdout: stashTreeOutput } = await execa("git", ["-C", cwd, "write-tree"]);
+        const { stdout: stashOutput } = await execa(
+            "git",
+            [
+                "-C",
+                cwd,
+                "commit-tree",
+                stashTreeOutput.trim(),
+                "-p",
+                headOutput.trim(),
+                "-p",
+                indexCommitOutput.trim(),
+                "-m",
+                message || "wt stash",
+            ]
+        );
+        const stashHash = stashOutput.trim();
 
         if (!stashHash) {
             // No changes were stashed (shouldn't happen since we checked above)
             return null;
         }
 
-        // Reset the working directory to HEAD to complete the stash effect
-        await execa("git", ["-C", cwd, "reset", "--hard", "HEAD"]);
-
-        // Clean untracked files
-        await execa("git", ["-C", cwd, "clean", "-fd"]);
-
-        // Record the dangling stash commit so an interrupted run can be recovered
+        // Record the dangling stash commit before the destructive reset so an
+        // interrupted run can recover both content and index state.
         try {
             await writeFile(
                 await stashRecordPath(cwd),
-                JSON.stringify({ hash: stashHash, message: message ?? "", createdAt: new Date().toISOString(), resetPaths })
+                JSON.stringify({
+                    hash: stashHash,
+                    message: message ?? "",
+                    createdAt: new Date().toISOString(),
+                    indexCommit: indexCommitOutput.trim(),
+                    resetPaths,
+                })
             );
         } catch (recordError: unknown) {
             // Non-fatal: the stash succeeded and callers restore by hash
@@ -527,6 +560,12 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
             );
         }
 
+        // Reset the working directory to HEAD to complete the stash effect.
+        await execa("git", ["-C", cwd, "reset", "--hard", "HEAD"]);
+
+        // Clean untracked files.
+        await execa("git", ["-C", cwd, "clean", "-fd"]);
+
         return stashHash;
     } catch (error: unknown) {
         const execaError = error as ExecaError; // execa rejects with ExecaError
@@ -534,11 +573,10 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
         return null;
     }
 }
-
 /**
  * Apply a specific stash by hash
  * This ensures we restore the exact changes that were stashed, avoiding conflicts
- * with the shared stash stack. The commit is dangling (created via `stash create`),
+ * with the shared stash stack. The commit is dangling (created by `stashChanges`),
  * so on failure the hash must be surfaced to the user for manual recovery.
  *
  * @param stashHash - The unique hash of the stash to apply
@@ -547,15 +585,18 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
  */
 export async function applyAndDropStash(stashHash: string, cwd: string = "."): Promise<boolean> {
     try {
-        // Apply the specific stash by hash
+        const record = await readStashRecord(cwd);
+
+        // Apply the specific stash by hash. The original index is restored
+        // explicitly below because the stash tree includes temporarily staged
+        // untracked files.
         await execa("git", ["-C", cwd, "stash", "apply", stashHash]);
 
-        // Clear the crash-recovery record if it points at this stash
-        const record = await readStashRecord(cwd);
         if (record?.hash === stashHash) {
-            // Best-effort: return untracked/unstaged paths to their pre-stash index
-            // state (content is restored either way; only the index differs)
-            if (record.resetPaths?.length) {
+            if (record.indexCommit) {
+                await execa("git", ["-C", cwd, "read-tree", "--reset", `${record.indexCommit}^{tree}`]);
+            } else if (record.resetPaths?.length) {
+                // Compatibility with records written before index snapshots.
                 try {
                     await execa("git", ["-C", cwd, "reset", "-q", "--", ...record.resetPaths]);
                 } catch {
