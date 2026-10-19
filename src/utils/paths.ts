@@ -97,14 +97,45 @@ export function validateBranchName(branchName: string): { isValid: boolean; erro
         return { isValid: false, error: 'Branch name contains invalid characters' };
     }
 
+    // ASCII control characters are invalid in git refs
+    if (/[\x00-\x1f\x7f]/.test(branchName)) {
+        return { isValid: false, error: 'Branch name contains control characters' };
+    }
+
     // Check for double dots
     if (branchName.includes('..')) {
         return { isValid: false, error: 'Branch name cannot contain ".."' };
     }
 
-    // Check for ending with .lock
-    if (branchName.endsWith('.lock')) {
-        return { isValid: false, error: 'Branch name cannot end with ".lock"' };
+    // The reflog syntax is not allowed in ref names
+    if (branchName.includes('@{')) {
+        return { isValid: false, error: 'Branch name cannot contain "@{"' };
+    }
+
+    // Branch names must not look like command flags
+    if (branchName.startsWith('-')) {
+        return { isValid: false, error: 'Branch name cannot start with "-"' };
+    }
+
+    if (branchName.startsWith('/') || branchName.endsWith('/') || branchName.includes('//')) {
+        return { isValid: false, error: 'Branch name cannot start or end with "/" or contain "//"' };
+    }
+
+    if (branchName.endsWith('.')) {
+        return { isValid: false, error: 'Branch name cannot end with "."' };
+    }
+
+    if (branchName === '@') {
+        return { isValid: false, error: 'Branch name cannot be "@"' };
+    }
+
+    // No path component may begin with "." or end with ".lock"
+    const components = branchName.split('/');
+    if (components.some(component => component.startsWith('.'))) {
+        return { isValid: false, error: 'Branch name components cannot start with "."' };
+    }
+    if (components.some(component => component.endsWith('.lock'))) {
+        return { isValid: false, error: 'Branch name components cannot end with ".lock"' };
     }
 
     return { isValid: true };
