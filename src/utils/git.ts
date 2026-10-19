@@ -1,4 +1,4 @@
-import { execa } from "execa";
+import { execa, ExecaError } from "execa";
 import chalk from "chalk";
 
 export async function getCurrentBranch(cwd: string = "."): Promise<string | null> {
@@ -468,9 +468,10 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
 }
 
 /**
- * Apply and drop a specific stash by hash
+ * Apply a specific stash by hash
  * This ensures we restore the exact changes that were stashed, avoiding conflicts
- * with the shared stash stack.
+ * with the shared stash stack. The commit is dangling (created via `stash create`),
+ * so on failure the hash must be surfaced to the user for manual recovery.
  *
  * @param stashHash - The unique hash of the stash to apply
  * @param cwd - Working directory
@@ -481,8 +482,10 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
         // Apply the specific stash by hash
         await execa("git", ["-C", cwd, "stash", "apply", stashHash]);
         return true;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to apply stash:"), error.stderr || error.message);
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to apply stash:"), execaError.stderr || execaError.message);
+        console.error(chalk.yellow(`Your changes are preserved in commit ${stashHash}. Recover them with: git stash apply ${stashHash}`));
         return false;
     }
 }

@@ -19,7 +19,6 @@ type CleanupHandler = () => Promise<void> | void;
 class ShutdownManager {
     private handlers: CleanupHandler[] = [];
     private isShuttingDown: boolean = false;
-    private originalSigintHandler: NodeJS.SignalsListener | undefined;
 
     constructor() {
         this.setupSignalHandlers();
@@ -29,13 +28,9 @@ class ShutdownManager {
      * Set up signal handlers for graceful shutdown
      */
     private setupSignalHandlers(): void {
-        // Store original handler if it exists
-        this.originalSigintHandler = process.listeners('SIGINT')[0] as NodeJS.SignalsListener | undefined;
-
-        // Remove existing handlers to prevent duplicate handling
-        process.removeAllListeners('SIGINT');
-
-        // Add our handler
+        // Register alongside any existing listeners. The singleton guarantees
+        // our handlers are added exactly once; never remove foreign listeners —
+        // libraries (prompts/readline, test harnesses) may depend on them.
         process.on('SIGINT', async () => {
             await this.handleShutdown('SIGINT');
         });
