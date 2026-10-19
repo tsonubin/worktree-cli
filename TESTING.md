@@ -68,16 +68,17 @@
      ```
 4. **Verify the Merge:**
    - Confirm that the changes from `test-merge` are merged into the current branch.
-   - Check that the test worktree is removed.
+   - Check that the test worktree is preserved (worktree removal is opt-in).
+   - Clean it up with `wt remove test-merge`, or re-run with `--remove` to verify removal.
 5. **Test with Force Flag:**
    - Create another test worktree:
      ```bash
      wt new test-merge-force
      ```
    - Make changes that would prevent normal removal (e.g., untracked files)
-   - Run the merge with force flag:
+   - Run the merge with remove and force flags:
      ```bash
-     wt merge test-merge-force --force
+     wt merge test-merge-force --remove --force
      ```
    - Verify that the merge succeeds and the worktree is forcibly removed.
 
@@ -108,7 +109,8 @@
      ```
 3. **Confirmation:**
    - For each listed worktree, verify that the branch and path are displayed.
-   - When prompted, enter `y` to remove a worktree or any other key to skip.
+   - In the multi-select prompt, use Space to mark worktrees for removal and Enter to confirm.
+   - Confirm the final prompt to proceed, or decline to cancel the purge.
 4. **Verification:**
    - After purging, run:
      ```bash
