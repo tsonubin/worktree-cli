@@ -19,7 +19,7 @@ interface StashRecord {
     resetPaths?: string[];
 }
 
-async function stashRecordPath(cwd: string): Promise<string> {
+export async function stashRecordPath(cwd: string = "."): Promise<string> {
     const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--git-common-dir"]);
     // --git-common-dir may be relative to the target cwd, not the process cwd
     return join(resolve(cwd, stdout.trim()), "wt-stash.json");

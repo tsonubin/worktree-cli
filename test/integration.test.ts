@@ -278,6 +278,29 @@ describe('wt new', () => {
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
 
+    it('should refuse --stash while an earlier stash record is unrestored', async () => {
+        const record = JSON.stringify({ hash: 'deadbeefcafe', message: 'test', createdAt: '2026-10-19' });
+        const recordPath = join(ctx.repoDir, '.git', 'wt-stash.json');
+        await writeFile(recordPath, record);
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'stash-pending');
+        const result = await runCli(
+            ['new', 'feature/stash-pending', '--path', worktreePath, '--editor', 'none', '--stash'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('git stash apply deadbeefcafe');
+        // The earlier record survives and nothing new was stashed
+        expect(await readFile(recordPath, 'utf-8')).toBe(record);
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+
+        await rm(recordPath, { force: true });
+        await rm(dirtyFile, { force: true });
+    });
+
     it('should fail headless when the main worktree is dirty and --stash is not set', async () => {
         const dirtyFile = join(ctx.repoDir, 'dirty.txt');
         await writeFile(dirtyFile, 'uncommitted');

@@ -5,6 +5,7 @@ import {
     isWorktreeClean,
     readStashRecord,
     stashChanges,
+    stashRecordPath,
 } from "./git.js";
 import { handleDirtyState } from "./tui.js";
 import { onShutdown } from "./shutdown.js";
@@ -69,6 +70,14 @@ export async function guardDirtyState(
                 console.log(chalk.yellow("Operation cancelled."));
                 process.exit(0);
             } else if (action === "stash") {
+                if (pending) {
+                    // The recovery record has one slot: a new stash would
+                    // overwrite it and leave the earlier commit unreferenced.
+                    console.error(chalk.red("Error: refusing to stash while an earlier stash is still unrestored."));
+                    console.error(chalk.yellow(`Recover it with: git stash apply ${pending.hash}`));
+                    console.error(chalk.yellow(`then delete ${await stashRecordPath(".")} and re-run.`));
+                    process.exit(1);
+                }
                 console.log(chalk.blue("Stashing your changes..."));
                 stashHash = await stashChanges(".", stashMessage);
                 if (stashHash) {
@@ -99,6 +108,11 @@ export async function guardDirtyState(
                 const restored = await applyAndDropStash(stashHash, ".");
                 if (restored) {
                     console.log(chalk.green("Changes restored successfully."));
+                } else {
+                    // The recovery record is kept (applyAndDropStash only
+                    // removes it on success); fail the command so scripts
+                    // do not treat the unrestored state as success.
+                    process.exitCode = 1;
                 }
                 stashHash = null;
             }
