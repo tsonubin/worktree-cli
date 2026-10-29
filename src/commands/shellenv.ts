@@ -34,11 +34,12 @@ end
 
 type SupportedShell = "bash" | "zsh" | "fish";
 
-function detectShell(): SupportedShell {
+function detectShell(): SupportedShell | undefined {
     const shellPath = process.env.SHELL || "";
     if (shellPath.endsWith("/fish")) return "fish";
     if (shellPath.endsWith("/bash")) return "bash";
-    return "zsh";
+    if (shellPath.endsWith("/zsh")) return "zsh";
+    return undefined;
 }
 
 export async function shellenvHandler(shell?: string) {
@@ -53,7 +54,10 @@ export async function shellenvHandler(shell?: string) {
             process.stdout.write(FISH_FUNCTION);
             break;
         default:
-            console.error(chalk.red(`Unsupported shell: ${shell}`));
+            const shellName = shell || process.env.SHELL;
+            console.error(chalk.red(shellName
+                ? `Unsupported shell: ${shellName}`
+                : "Could not detect shell: $SHELL is not set"));
             console.error(chalk.yellow("Supported shells: bash, zsh, fish"));
             process.exit(1);
     }
