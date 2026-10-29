@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveWorktreeName, getShortBranchName, validateBranchName } from '../src/utils/paths.js';
+import { resolveWorktreeName, validateBranchName } from '../src/utils/paths.js';
 
 describe('Path Utilities', () => {
     describe('resolveWorktreeName', () => {
@@ -21,24 +21,6 @@ describe('Path Utilities', () => {
             expect(featureAuth).not.toBe(hotfixAuth);
             expect(featureAuth).toBe('feature-auth');
             expect(hotfixAuth).toBe('hotfix-auth');
-        });
-    });
-
-    describe('getShortBranchName', () => {
-        it('should return the last segment of a branch name', () => {
-            expect(getShortBranchName('feature/auth')).toBe('auth');
-            expect(getShortBranchName('hotfix/urgent-fix')).toBe('urgent-fix');
-            expect(getShortBranchName('user/john/feature')).toBe('feature');
-        });
-
-        it('should handle branch names without slashes', () => {
-            expect(getShortBranchName('main')).toBe('main');
-            expect(getShortBranchName('develop')).toBe('develop');
-        });
-
-        it('should handle empty segments', () => {
-            expect(getShortBranchName('feature//auth')).toBe('auth');
-            expect(getShortBranchName('/leading-slash')).toBe('leading-slash');
         });
     });
 
@@ -78,6 +60,33 @@ describe('Path Utilities', () => {
             for (const char of invalidChars) {
                 const result = validateBranchName(`branch${char}name`);
                 expect(result.isValid).toBe(false);
+            }
+        });
+
+        it('should reject remaining invalid git ref patterns', () => {
+            const invalidNames = [
+                'branch@{1}',
+                '-leading-dash',
+                '/leading-slash',
+                'trailing-slash/',
+                'double//slash',
+                'trailing-dot.',
+                '@',
+                'feat/.hidden',
+                'feat/a.lock',
+                'feat/' + String.fromCharCode(1) + 'control',
+            ];
+            for (const name of invalidNames) {
+                const result = validateBranchName(name);
+                expect(result.isValid, `"${name}" should be rejected`).toBe(false);
+            }
+        });
+
+        it('should accept names that git accepts', () => {
+            const validNames = ['a@b', 'feat/1.2.3', 'user/john/feature', 'fix-123', 'release_2'];
+            for (const name of validNames) {
+                const result = validateBranchName(name);
+                expect(result.isValid, `"${name}" should be accepted`).toBe(true);
             }
         });
     });

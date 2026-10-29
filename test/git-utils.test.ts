@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { findWorktreeByPath, getWorktrees } from '../src/utils/git.js';
 
 /**
  * Tests for git utility functions
@@ -19,7 +20,7 @@ async function createTestRepo(): Promise<TestContext> {
     const repoDir = join(testDir, 'repo');
 
     await mkdir(repoDir, { recursive: true });
-    await execa('git', ['init'], { cwd: repoDir });
+    await execa('git', ['init', '-b', 'main'], { cwd: repoDir });
     await execa('git', ['config', 'user.email', 'test@test.com'], { cwd: repoDir });
     await execa('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
     await writeFile(join(repoDir, 'README.md'), '# Test\n');
@@ -69,6 +70,21 @@ describe('getWorktrees', () => {
 
         expect(featureWt).toBeDefined();
         expect(featureWt?.path).toContain('feature-wt');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', wtPath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should handle worktree paths with newlines and quotes', async () => {
+        const wtPath = join(ctx.testDir, 'weird"\nname');
+        await execa('git', ['worktree', 'add', '-b', 'weirdtest', wtPath], { cwd: ctx.repoDir });
+
+        const worktrees = await getWorktrees(ctx.repoDir);
+        const weird = worktrees.find(wt => wt.branch === 'weirdtest');
+        expect(weird?.path).toBe(wtPath);
+
+        const byPath = await findWorktreeByPath(wtPath, ctx.repoDir);
+        expect(byPath?.branch).toBe('weirdtest');
 
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', wtPath], { cwd: ctx.repoDir }).catch(() => {});
@@ -181,25 +197,6 @@ describe('isWorktreeClean', () => {
     });
 });
 
-describe('getCurrentBranch', () => {
-    let ctx: TestContext;
-
-    beforeAll(async () => {
-        ctx = await createTestRepo();
-    });
-
-    afterAll(async () => {
-        await ctx.cleanup();
-    });
-
-    it('should return current branch name', async () => {
-        const { getCurrentBranch } = await import('../src/utils/git.js');
-
-        const branch = await getCurrentBranch(ctx.repoDir);
-        expect(branch).toBe('main');
-    });
-});
-
 describe('getRepoRoot', () => {
     let ctx: TestContext;
 
@@ -239,7 +236,7 @@ describe('getRepoName', () => {
     });
 });
 
-describe('stashChanges and popStash', () => {
+describe('stashChanges and applyAndDropStash', () => {
     let ctx: TestContext;
 
     beforeAll(async () => {
@@ -250,7 +247,7 @@ describe('stashChanges and popStash', () => {
         await ctx.cleanup();
     });
 
-    it('should stash and pop changes', async () => {
+    it('should stash and reapply changes', async () => {
         const { stashChanges, applyAndDropStash, isWorktreeClean } = await import('../src/utils/git.js');
 
         // Make changes
@@ -281,6 +278,28 @@ describe('stashChanges and popStash', () => {
         // Cleanup
         await execa('git', ['checkout', '--', '.'], { cwd: ctx.repoDir }).catch(() => {});
         await rm(join(ctx.repoDir, 'stash-test.txt')).catch(() => {});
+    });
+
+    it('should restore the original staged and unstaged split', async () => {
+        const { stashChanges, applyAndDropStash } = await import('../src/utils/git.js');
+        const readmePath = join(ctx.repoDir, 'README.md');
+
+        try {
+            await writeFile(readmePath, 'staged content\n');
+            await execa('git', ['add', 'README.md'], { cwd: ctx.repoDir });
+            await writeFile(readmePath, 'unstaged content\n');
+
+            const stashHash = await stashChanges(ctx.repoDir, 'index fidelity');
+            expect(stashHash).not.toBeNull();
+            expect(await applyAndDropStash(stashHash!, ctx.repoDir)).toBe(true);
+
+            const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: ctx.repoDir });
+            expect(status).toContain('MM README.md');
+            const { stdout: stagedContent } = await execa('git', ['show', ':README.md'], { cwd: ctx.repoDir });
+            expect(stagedContent).toBe('staged content');
+        } finally {
+            await execa('git', ['reset', '--hard', 'HEAD'], { cwd: ctx.repoDir }).catch(() => {});
+        }
     });
 
     it('should return null when nothing to stash', async () => {

@@ -17,7 +17,23 @@ A CLI tool for managing Git worktrees with a focus on opening them in the Cursor
 pnpm install -g @johnlindquist/worktree
 ```
 
+Requires git 2.36+ (uses NUL-terminated `git worktree list` output to handle worktree
+paths containing unusual characters safely).
+
 ## Usage
+
+### Non-interactive use (CI)
+
+Without a terminal, prompts are never shown — commands either run directly or fail with
+guidance (they never hang on a prompt or fake success):
+
+- `wt new` / `wt setup` / `wt extract` / `wt pr`: pass `--stash` to stash uncommitted
+  changes in the main worktree and restore them after; without it, a dirty main worktree
+  is an error.
+- Setup scripts (`wt setup`, `wt pr --setup`) need `--trust` to execute without
+  confirmation.
+- `wt remove` and `wt open` need a `<pathOrBranch>` argument, `wt pr` needs a
+  `<prNumber>`, and `wt purge` requires an interactive terminal.
 
 ### Create a new worktree from Branch Name
 
@@ -26,9 +42,10 @@ wt new <branchName> [options]
 ```
 Options:
 - `-p, --path <path>`: Specify a custom path for the worktree
-- `-c, --checkout`: Create new branch if it doesn't exist and checkout automatically
+- `-c, --checkout`: Deprecated: new branches are created automatically when needed
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
@@ -44,6 +61,19 @@ wt new feature/vscode -e code
 - **Abort**: Cancel the operation
 - **Continue anyway**: Proceed with uncommitted changes
 
+Stashed changes are restored even if the command fails afterwards, including their
+index state (untracked files return untracked, not staged). If a run is
+killed before restoring, the next `wt` command warns and prints the exact
+`git stash apply <hash>` recovery command.
+Each pending stash is retained under `refs/wt/stashes/<unique-id>`, independently of
+your normal stash stack, so Git garbage collection cannot remove it. If either
+the recovery ref or record cannot be saved, the command stops without resetting
+your files or changing their staged/unstaged state.
+
+**Existing directories**: If the target directory already exists, it must be a
+worktree of the requested branch — `wt new` reuses it in that case and errors
+otherwise (no silent adoption or deletion of your directories).
+
 ### Create a new worktree with setup scripts
 
 ```bash
@@ -54,10 +84,11 @@ Creates a new worktree and automatically runs setup commands from `worktrees.jso
 
 Options:
 - `-p, --path <path>`: Specify a custom path for the worktree
-- `-c, --checkout`: Create new branch if it doesn't exist and checkout automatically
+- `-c, --checkout`: Deprecated: new branches are created automatically when needed
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `-t, --trust`: Trust and run setup commands without confirmation (for CI environments)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
@@ -87,6 +118,8 @@ Options:
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `-s, --setup`: Run setup scripts from `worktrees.json` or `.cursor/worktrees.json`
+- `-t, --trust`: Trust and execute setup scripts without confirmation (use with caution)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
 
 Example:
 ```bash
@@ -108,6 +141,9 @@ wt pr 123 --setup
 ```bash
 wt open [pathOrBranch]
 ```
+
+Options:
+- `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 
 **Interactive Selection**: Run `wt open` without arguments to see a fuzzy-searchable list of worktrees.
 
@@ -162,6 +198,12 @@ Interactive multi-select interface to remove multiple worktrees at once. The mai
 wt extract [branchName] [options]
 ```
 
+Options:
+- `-p, --path <path>`: Specify a custom path for the worktree
+- `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
+- `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
+- `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
+
 Extracts the current (or specified) branch into a separate worktree, useful when you want to continue working on a branch in isolation.
 
 ### Merge a worktree branch
@@ -176,6 +218,8 @@ Merge a branch from its worktree into the current branch. The command has been d
 - Checks for uncommitted changes in the target worktree by default
 - Requires explicit opt-in flags for destructive operations
 - Preserves the source worktree after merge by default
+- Refuses to merge a branch into itself, and prints `git merge --continue` / `--abort`
+  guidance when a merge fails
 
 Options:
 - `--auto-commit`: Automatically commit uncommitted changes in the target worktree before merging
@@ -233,6 +277,14 @@ wt config path
 The default editor will be used when creating new worktrees unless overridden with the `-e` flag.
 
 Setting the editor to `none` will skip opening any editor after creating a worktree, which is useful for CI/CD pipelines or scripts.
+
+The `WT_EDITOR` environment variable overrides the configured default editor for a single
+run (and also accepts `none`), e.g. `WT_EDITOR=none wt new feature/x`:
+
+```bash
+WT_EDITOR=code wt new feature/login   # open this worktree in VS Code
+WT_EDITOR=none wt new feature/script  # never open an editor
+```
 
 ### Configure Git Provider
 

@@ -1,68 +1,25 @@
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
-import { resolve, join } from "node:path";
-import { getDefaultEditor, shouldSkipEditor } from "../config.js";
-import {
-    isWorktreeClean,
-    isMainRepoBare,
-    getWorktrees,
-    stashChanges,
-    applyAndDropStash,
-    getUpstreamRemote,
-} from "../utils/git.js";
+import { getWorktrees, getUpstreamRemote, validateGitRepo } from "../utils/git.js";
+import { guardDirtyState } from "../utils/dirty.js";
+import type { DirtyStateGuard } from "../utils/dirty.js";
+import { openInEditor } from "../utils/editor.js";
 import { resolveWorktreePath, validateBranchName } from "../utils/paths.js";
 import { AtomicWorktreeOperation } from "../utils/atomic.js";
-import { handleDirtyState } from "../utils/tui.js";
-import { onShutdown } from "../utils/shutdown.js";
 
 export async function extractWorktreeHandler(
     branchName?: string,
-    options: { path?: string; install?: string; editor?: string } = {}
+    options: { path?: string; install?: string; editor?: string; stash?: boolean } = {}
 ) {
-    let stashHash: string | null = null;
-    let unregisterShutdown: (() => void) | null = null;
+    let guard: DirtyStateGuard | undefined;
 
     try {
         // 1. Validate we're in a git repo
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
 
-        // 2. Check if this is a bare repository
-        const isBare = await isMainRepoBare();
-
-        // 3. Check if main worktree is clean (skip for bare repos)
-        if (!isBare) {
-            console.log(chalk.blue("Checking if main worktree is clean..."));
-            const isClean = await isWorktreeClean(".");
-
-            if (!isClean) {
-                const action = await handleDirtyState(
-                    "Your main worktree has uncommitted changes."
-                );
-
-                if (action === 'abort') {
-                    console.log(chalk.yellow("Operation cancelled."));
-                    process.exit(0);
-                } else if (action === 'stash') {
-                    console.log(chalk.blue("Stashing your changes..."));
-                    stashHash = await stashChanges(".", `wt-extract: Before extracting worktree`);
-                    if (stashHash) {
-                        console.log(chalk.green("Changes stashed successfully."));
-                        // Register SIGINT handler to restore stash if interrupted
-                        unregisterShutdown = onShutdown(async () => {
-                            if (stashHash) {
-                                console.log(chalk.blue("Restoring stashed changes due to interruption..."));
-                                await applyAndDropStash(stashHash, ".");
-                            }
-                        });
-                    }
-                } else {
-                    console.log(chalk.yellow("Proceeding with uncommitted changes..."));
-                }
-            } else {
-                console.log(chalk.green("Main worktree is clean."));
-            }
-        }
+        // 2-3. Protect uncommitted changes in the main worktree (stash/restore)
+        guard = await guardDirtyState(`wt-extract: Before extracting worktree`, { stash: options.stash });
 
         // 4. Determine which branch to extract
         let selectedBranch = branchName;
@@ -73,7 +30,8 @@ export async function extractWorktreeHandler(
             if (!selectedBranch) {
                 console.error(chalk.red("Error: Could not determine current branch (possibly in detached HEAD state)."));
                 console.error(chalk.yellow("Please specify a branch name: wt extract <branch-name>"));
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
 
             console.log(chalk.blue(`No branch specified. Using current branch: ${selectedBranch}`));
@@ -83,7 +41,8 @@ export async function extractWorktreeHandler(
         const validation = validateBranchName(selectedBranch);
         if (!validation.isValid) {
             console.error(chalk.red(`Error: ${validation.error}`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 5. Check if branch already has a worktree
@@ -93,7 +52,8 @@ export async function extractWorktreeHandler(
         if (existingWorktree) {
             console.error(chalk.red(`Error: Branch "${selectedBranch}" already has a worktree at ${existingWorktree.path}.`));
             console.error(chalk.yellow("Use 'wt list' to see existing worktrees."));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 6. Verify the branch exists (either locally or remotely)
@@ -112,7 +72,8 @@ export async function extractWorktreeHandler(
 
         if (!branchExistsLocally && !branchExistsRemotely) {
             console.error(chalk.red(`Error: Branch "${selectedBranch}" does not exist locally or remotely.`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         }
 
         // 7. Build final path for the new worktree
@@ -126,7 +87,8 @@ export async function extractWorktreeHandler(
             await stat(resolvedPath);
             console.error(chalk.red(`Error: Directory already exists at: ${resolvedPath}`));
             console.error(chalk.yellow("Please choose a different path with --path option."));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
         } catch {
             // Directory doesn't exist, continue with creation
         }
@@ -159,20 +121,9 @@ export async function extractWorktreeHandler(
         }
 
         // 10. Open in the specified editor (or use configured default)
-        const configuredEditor = getDefaultEditor();
-        const editorCommand = options.editor || configuredEditor;
-
-        if (shouldSkipEditor(editorCommand)) {
-            console.log(chalk.gray(`Editor set to 'none', skipping editor open.`));
-        } else {
-            console.log(chalk.blue(`Opening ${resolvedPath} in ${editorCommand}...`));
-
-            try {
-                await execa(editorCommand, [resolvedPath], { stdio: "inherit" });
-            } catch (editorError) {
-                console.error(chalk.red(`Failed to open editor "${editorCommand}". Please ensure it's installed and in your PATH.`));
-                console.warn(chalk.yellow(`Continuing without opening editor.`));
-            }
+        const outcome = await openInEditor(resolvedPath, options.editor);
+        if (outcome === "failed") {
+            console.warn(chalk.yellow(`Continuing without opening editor.`));
         }
 
         console.log(chalk.green(`\nWorktree extracted at ${resolvedPath}.`));
@@ -186,20 +137,8 @@ export async function extractWorktreeHandler(
         } else {
             console.error(chalk.red("Failed to extract worktree:"), error);
         }
-        process.exit(1);
+        process.exitCode = 1;
     } finally {
-        // Unregister shutdown handler
-        if (unregisterShutdown) {
-            unregisterShutdown();
-        }
-
-        // Restore stashed changes if we stashed them
-        if (stashHash) {
-            console.log(chalk.blue("Restoring your stashed changes..."));
-            const restored = await applyAndDropStash(stashHash, ".");
-            if (restored) {
-                console.log(chalk.green("Changes restored successfully."));
-            }
-        }
+        await guard?.finish();
     }
 }

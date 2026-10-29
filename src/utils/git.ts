@@ -1,14 +1,81 @@
-import { execa } from "execa";
+import { execa, ExecaError } from "execa";
 import chalk from "chalk";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
-export async function getCurrentBranch(cwd: string = "."): Promise<string | null> {
+/**
+ * Record of stashed changes that have not been restored yet.
+ * A dedicated Git ref keeps the stash reachable without using `refs/stash`.
+ * This file records the information needed to restore the original index.
+ */
+interface StashRecord {
+    hash: string;
+    message: string;
+    createdAt: string;
+    /** Git ref retaining the stash until its contents and index are restored. */
+    recoveryRef?: string;
+    /** Commit whose tree represents the index before the stash was created. */
+    indexCommit?: string;
+    /** Paths that were untracked or unstaged before stashing and must be
+     *  returned to that index state after the stash is applied */
+    resetPaths?: string[];
+}
+
+function stashRecoveryRef(): string {
+    return `refs/wt/stashes/${randomUUID()}`;
+}
+
+function isStashRecoveryRef(ref: string | undefined): ref is string {
+    return !!ref && /^refs\/wt\/stashes\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(ref);
+}
+
+export async function stashRecordPath(cwd: string = "."): Promise<string> {
+    const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--git-common-dir"]);
+    // --git-common-dir may be relative to the target cwd, not the process cwd
+    return join(resolve(cwd, stdout.trim()), "wt-stash.json");
+}
+
+/**
+ * Read the record of a not-yet-restored stash, if one exists.
+ * Returns null when no record exists or it cannot be read/parsed.
+ */
+export async function readStashRecord(cwd: string = "."): Promise<StashRecord | null> {
     try {
-        const { stdout } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
-        return stdout.trim();
-    } catch (error) {
-        // Handle case where HEAD is detached or not in a git repo
-        console.error(chalk.yellow("Could not determine current branch."), error);
+        const raw = await readFile(await stashRecordPath(cwd), "utf-8");
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && "hash" in parsed && typeof parsed.hash === "string") {
+            return {
+                hash: parsed.hash,
+                message: "message" in parsed && typeof parsed.message === "string" ? parsed.message : "",
+                createdAt: "createdAt" in parsed && typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+                recoveryRef: "recoveryRef" in parsed && typeof parsed.recoveryRef === "string" ? parsed.recoveryRef : undefined,
+                indexCommit: "indexCommit" in parsed && typeof parsed.indexCommit === "string" ? parsed.indexCommit : undefined,
+                resetPaths:
+                    "resetPaths" in parsed &&
+                    Array.isArray(parsed.resetPaths) &&
+                    parsed.resetPaths.every(entry => typeof entry === "string")
+                        ? parsed.resetPaths
+                        : [],
+            };
+        }
         return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Validate that we are inside a git work tree
+ *
+ * @throws Error with a user-friendly message when we are not
+ */
+export async function validateGitRepo(): Promise<void> {
+    try {
+        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+    } catch {
+        throw new Error("Not a git repository. Please run this command from within a git repository.");
     }
 }
 
@@ -88,35 +155,19 @@ export async function isMainRepoBare(cwd: string = '.'): Promise<boolean> {
  */
 export async function getUpstreamRemote(cwd: string = "."): Promise<string> {
     try {
-        // Strategy 1: Try to get the remote from the main branch's tracking information
+        // Strategy 1: Try to get the remote from the main/master branch's tracking information
         // This handles cases where main is tracking upstream/main instead of origin/main
-        try {
-            const { stdout: mainBranch } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "main@{upstream}"], {
+        for (const candidate of ["main", "master"]) {
+            const { stdout: upstreamRef } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", `${candidate}@{upstream}`], {
                 reject: false,
             });
 
-            if (mainBranch && mainBranch.trim()) {
+            if (upstreamRef.trim()) {
                 // Extract remote name from refs/remotes/upstream/main -> upstream
-                const match = mainBranch.trim().match(/^([^\/]+)\//);
+                const match = upstreamRef.trim().match(/^([^\/]+)\//);
                 if (match && match[1]) {
                     return match[1];
                 }
-            }
-        } catch {
-            // main branch doesn't have upstream tracking, try master
-            try {
-                const { stdout: masterBranch } = await execa("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "master@{upstream}"], {
-                    reject: false,
-                });
-
-                if (masterBranch && masterBranch.trim()) {
-                    const match = masterBranch.trim().match(/^([^\/]+)\//);
-                    if (match && match[1]) {
-                        return match[1];
-                    }
-                }
-            } catch {
-                // Neither main nor master have upstream tracking
             }
         }
 
@@ -268,26 +319,30 @@ export interface WorktreeInfo {
  * - Detached HEAD states
  * - Locked worktrees (with optional reason)
  * - Prunable (stale) worktrees
+ * - Paths and reasons containing unsafe bytes (newlines, quotes)
  *
  * @param cwd - Working directory to run git command from
- * @returns Array of WorktreeInfo objects sorted by path
+ * @returns Array of WorktreeInfo objects in git's order (main worktree first)
  */
 export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
     try {
-        const { stdout } = await execa("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
+        // -z keeps paths and lock/reason values with unsafe bytes (newlines,
+        // quotes, ...) unquoted inside NUL-terminated fields; git 2.36+
+        // documents this as the workaround for unreliable c-quoting in the
+        // plain porcelain output
+        const { stdout } = await execa("git", ["-C", cwd, "worktree", "list", "--porcelain", "-z"]);
 
         if (!stdout.trim()) {
             return [];
         }
 
-        // Split by double newline to get individual worktree blocks
-        // The porcelain format separates worktrees with blank lines
-        const blocks = stdout.split('\n\n').filter(block => block.trim());
+        // Records are separated by an empty NUL-terminated field
+        const blocks = stdout.split('\0\0').filter(block => block.length > 0);
         const worktrees: WorktreeInfo[] = [];
         let isFirstWorktree = true;
 
         for (const block of blocks) {
-            const lines = block.split('\n');
+            const fields = block.split('\0');
             const info: WorktreeInfo = {
                 path: '',
                 head: '',
@@ -299,29 +354,29 @@ export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
                 bare: false,
             };
 
-            for (const line of lines) {
-                if (line.startsWith('worktree ')) {
-                    info.path = line.substring('worktree '.length);
-                } else if (line.startsWith('HEAD ')) {
-                    info.head = line.substring('HEAD '.length);
-                } else if (line.startsWith('branch ')) {
+            for (const field of fields) {
+                if (field.startsWith('worktree ')) {
+                    info.path = field.substring('worktree '.length);
+                } else if (field.startsWith('HEAD ')) {
+                    info.head = field.substring('HEAD '.length);
+                } else if (field.startsWith('branch ')) {
                     // Convert refs/heads/branch-name to branch-name
-                    const fullRef = line.substring('branch '.length);
+                    const fullRef = field.substring('branch '.length);
                     info.branch = fullRef.replace('refs/heads/', '');
-                } else if (line === 'detached') {
+                } else if (field === 'detached') {
                     info.detached = true;
-                } else if (line === 'bare') {
+                } else if (field === 'bare') {
                     info.bare = true;
-                } else if (line === 'locked') {
+                } else if (field === 'locked') {
                     info.locked = true;
-                } else if (line.startsWith('locked ')) {
+                } else if (field.startsWith('locked ')) {
                     info.locked = true;
-                    info.lockReason = line.substring('locked '.length);
-                } else if (line === 'prunable') {
+                    info.lockReason = field.substring('locked '.length);
+                } else if (field === 'prunable') {
                     info.prunable = true;
-                } else if (line.startsWith('prunable ')) {
+                } else if (field.startsWith('prunable ')) {
                     info.prunable = true;
-                    info.pruneReason = line.substring('prunable '.length);
+                    info.pruneReason = field.substring('prunable '.length);
                 }
             }
 
@@ -332,8 +387,9 @@ export async function getWorktrees(cwd: string = "."): Promise<WorktreeInfo[]> {
         }
 
         return worktrees;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to list worktrees:"), error.stderr || error.message);
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to list worktrees:"), execaError.stderr || execaError.message);
         return [];
     }
 }
@@ -421,56 +477,132 @@ export async function getRepoName(cwd: string = "."): Promise<string> {
 }
 
 /**
- * Stash changes in the current worktree using git stash create
- * This creates a unique, identifiable stash commit and returns its hash
- * to prevent race conditions with concurrent operations.
+ * Stash changes in the current worktree using Git commit/tree plumbing.
+ * This creates a unique commit retained by a dedicated recovery ref and returns
+ * its hash without changing the user's stash stack.
  *
  * @param cwd - Working directory
  * @param message - Optional stash message
  * @returns Stash hash if changes were stashed, null if working tree was clean
+ * @throws When the stash cannot be safely persisted or the worktree reset fails
  */
 export async function stashChanges(cwd: string = ".", message?: string): Promise<string | null> {
+    let temporaryIndexDir: string | undefined;
+    let recoveryRef: string | undefined;
     try {
-        // First check if there are any changes to stash
-        const { stdout: statusOutput } = await execa("git", ["-C", cwd, "status", "--porcelain"]);
+        // First check if there are any changes to stash, noting which paths were
+        // untracked or unstaged so the restore can return them to that state
+        // (`stash apply` stages everything otherwise)
+        const { stdout: statusOutput } = await execa("git", ["-C", cwd, "status", "--porcelain", "-z"]);
         if (!statusOutput.trim()) {
             // No changes to stash
             return null;
         }
-
-        // Add untracked files to the index temporarily so they're included in the stash
-        await execa("git", ["-C", cwd, "add", "-A"]);
-
-        // Create a stash commit and get its hash
-        const args = ["stash", "create"];
-        if (message) {
-            args.push(message);
+        const resetPaths: string[] = [];
+        for (const entry of statusOutput.split("\0")) {
+            if (entry.length < 4) {
+                continue;
+            }
+            const x = entry[0];
+            const y = entry[1];
+            if (x === "?" || (x === " " && y !== " ")) {
+                resetPaths.push(entry.substring(3));
+            }
         }
-        const { stdout } = await execa("git", ["-C", cwd, ...args]);
-        const stashHash = stdout.trim();
+
+        // Save the original index as the second parent of the custom stash
+        // commit. Applying that parent later restores staged/unstaged splits.
+        const { stdout: headOutput } = await execa("git", ["-C", cwd, "rev-parse", "HEAD"]);
+        const { stdout: indexTreeOutput } = await execa("git", ["-C", cwd, "write-tree"]);
+        const { stdout: indexCommitOutput } = await execa(
+            "git",
+            [
+                "-C",
+                cwd,
+                "commit-tree",
+                indexTreeOutput.trim(),
+                "-p",
+                headOutput.trim(),
+                "-m",
+                "wt index snapshot",
+            ]
+        );
+
+        // Build the working-tree snapshot in a separate index. If persistence
+        // fails, the user's staged/unstaged split has never been changed.
+        temporaryIndexDir = await mkdtemp(join(tmpdir(), "wt-stash-index-"));
+        const snapshotEnv = { GIT_INDEX_FILE: join(temporaryIndexDir, "index") };
+        await execa("git", ["-C", cwd, "read-tree", indexTreeOutput.trim()], { env: snapshotEnv });
+        await execa("git", ["-C", cwd, "add", "-A"], { env: snapshotEnv });
+        const { stdout: stashTreeOutput } = await execa("git", ["-C", cwd, "write-tree"], { env: snapshotEnv });
+        const { stdout: stashOutput } = await execa(
+            "git",
+            [
+                "-C",
+                cwd,
+                "commit-tree",
+                stashTreeOutput.trim(),
+                "-p",
+                headOutput.trim(),
+                "-p",
+                indexCommitOutput.trim(),
+                "-m",
+                message || "wt stash",
+            ]
+        );
+        const stashHash = stashOutput.trim();
 
         if (!stashHash) {
-            // No changes were stashed (shouldn't happen since we checked above)
-            return null;
+            throw new Error("Git did not create a stash commit.");
         }
 
-        // Reset the working directory to HEAD to complete the stash effect
+        // A hash in JSON alone does not protect an object from Git GC. Both the
+        // ref and recovery metadata must exist before any destructive reset.
+        // Identical snapshots can have identical hashes, but each operation
+        // needs its own ref so another run's cleanup cannot remove this backup.
+        const ref = stashRecoveryRef();
+        await execa("git", ["-C", cwd, "update-ref", ref, stashHash]);
+        recoveryRef = ref;
+        await writeFile(
+            await stashRecordPath(cwd),
+            JSON.stringify({
+                hash: stashHash,
+                message: message ?? "",
+                createdAt: new Date().toISOString(),
+                recoveryRef,
+                indexCommit: indexCommitOutput.trim(),
+                resetPaths,
+            }),
+            // Never replace another interrupted or concurrent operation's record.
+            { flag: "wx" }
+        );
+
+        // Reset the working directory to HEAD to complete the stash effect.
         await execa("git", ["-C", cwd, "reset", "--hard", "HEAD"]);
 
-        // Clean untracked files
+        // Clean untracked files.
         await execa("git", ["-C", cwd, "clean", "-fd"]);
 
         return stashHash;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to stash changes:"), error.stderr || error.message);
-        return null;
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to stash changes:"), execaError.stderr || execaError.message);
+        if (recoveryRef) {
+            console.error(chalk.yellow(`A backup of your changes is preserved at ${recoveryRef}.`));
+        }
+        // Callers must abort rather than treating a failed stash as a clean tree.
+        throw error;
+    } finally {
+        if (temporaryIndexDir) {
+            await rm(temporaryIndexDir, { recursive: true, force: true }).catch(() => {});
+        }
     }
 }
-
 /**
- * Apply and drop a specific stash by hash
+ * Apply a specific stash by hash
  * This ensures we restore the exact changes that were stashed, avoiding conflicts
- * with the shared stash stack.
+ * with the shared stash stack. On failure the recovery ref and metadata are
+ * retained and the hash is surfaced to the user for manual recovery.
  *
  * @param stashHash - The unique hash of the stash to apply
  * @param cwd - Working directory
@@ -478,28 +610,35 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
  */
 export async function applyAndDropStash(stashHash: string, cwd: string = "."): Promise<boolean> {
     try {
-        // Apply the specific stash by hash
-        await execa("git", ["-C", cwd, "stash", "apply", stashHash]);
-        return true;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to apply stash:"), error.stderr || error.message);
-        return false;
-    }
-}
+        const record = await readStashRecord(cwd);
 
-/**
- * Pop the most recent stash
- * @deprecated Use applyAndDropStash with a specific hash instead to prevent race conditions
- *
- * @param cwd - Working directory
- * @returns true if stash was popped successfully
- */
-export async function popStash(cwd: string = "."): Promise<boolean> {
-    try {
-        await execa("git", ["-C", cwd, "stash", "pop"]);
+        // Apply the specific stash by hash. The original index is restored
+        // explicitly below because the stash tree includes temporarily staged
+        // untracked files.
+        await execa("git", ["-C", cwd, "stash", "apply", stashHash]);
+
+        if (record?.hash === stashHash) {
+            if (record.indexCommit) {
+                await execa("git", ["-C", cwd, "read-tree", "--reset", `${record.indexCommit}^{tree}`]);
+            } else if (record.resetPaths?.length) {
+                // Compatibility with records written before index snapshots.
+                try {
+                    await execa("git", ["-C", cwd, "reset", "-q", "--", ...record.resetPaths]);
+                } catch {
+                    // Leave the paths staged rather than failing the restore
+                }
+            }
+            await rm(await stashRecordPath(cwd), { force: true });
+            if (isStashRecoveryRef(record.recoveryRef)) {
+                // Delete only our own ref, and only if it still holds this stash.
+                await execa("git", ["-C", cwd, "update-ref", "-d", record.recoveryRef, stashHash]);
+            }
+        }
         return true;
-    } catch (error: any) {
-        console.error(chalk.red("Failed to pop stash:"), error.stderr || error.message);
+    } catch (error: unknown) {
+        const execaError = error as ExecaError; // execa rejects with ExecaError
+        console.error(chalk.red("Failed to apply stash:"), execaError.stderr || execaError.message);
+        console.error(chalk.yellow(`Your changes are preserved in commit ${stashHash}. Recover them with: git stash apply ${stashHash}`));
         return false;
     }
 }
