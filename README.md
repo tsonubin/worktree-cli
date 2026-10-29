@@ -65,6 +65,10 @@ Stashed changes are restored even if the command fails afterwards, including the
 index state (untracked files return untracked, not staged). If a run is
 killed before restoring, the next `wt` command warns and prints the exact
 `git stash apply <hash>` recovery command.
+Each pending stash is retained under `refs/wt/stashes/<unique-id>`, independently of
+your normal stash stack, so Git garbage collection cannot remove it. If either
+the recovery ref or record cannot be saved, the command stops without resetting
+your files or changing their staged/unstaged state.
 
 **Existing directories**: If the target directory already exists, it must be a
 worktree of the requested branch — `wt new` reuses it in that case and errors

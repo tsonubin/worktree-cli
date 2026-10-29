@@ -72,7 +72,7 @@ export async function guardDirtyState(
             } else if (action === "stash") {
                 if (pending) {
                     // The recovery record has one slot: a new stash would
-                    // overwrite it and leave the earlier commit unreferenced.
+                    // overwrite the earlier stash's index recovery metadata.
                     console.error(chalk.red("Error: refusing to stash while an earlier stash is still unrestored."));
                     console.error(chalk.yellow(`Recover it with: git stash apply ${pending.hash}`));
                     console.error(chalk.yellow(`then delete ${await stashRecordPath(".")} and re-run.`));

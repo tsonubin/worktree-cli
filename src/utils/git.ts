@@ -1,22 +1,34 @@
 import { execa, ExecaError } from "execa";
 import chalk from "chalk";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 /**
  * Record of stashed changes that have not been restored yet.
- * The stash commit created by `stashChanges` is dangling (not in `refs/stash`),
- * so this file is the durable link back to the user's uncommitted work.
+ * A dedicated Git ref keeps the stash reachable without using `refs/stash`.
+ * This file records the information needed to restore the original index.
  */
 interface StashRecord {
     hash: string;
     message: string;
     createdAt: string;
+    /** Git ref retaining the stash until its contents and index are restored. */
+    recoveryRef?: string;
     /** Commit whose tree represents the index before the stash was created. */
     indexCommit?: string;
     /** Paths that were untracked or unstaged before stashing and must be
      *  returned to that index state after the stash is applied */
     resetPaths?: string[];
+}
+
+function stashRecoveryRef(): string {
+    return `refs/wt/stashes/${randomUUID()}`;
+}
+
+function isStashRecoveryRef(ref: string | undefined): ref is string {
+    return !!ref && /^refs\/wt\/stashes\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(ref);
 }
 
 export async function stashRecordPath(cwd: string = "."): Promise<string> {
@@ -38,6 +50,7 @@ export async function readStashRecord(cwd: string = "."): Promise<StashRecord | 
                 hash: parsed.hash,
                 message: "message" in parsed && typeof parsed.message === "string" ? parsed.message : "",
                 createdAt: "createdAt" in parsed && typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+                recoveryRef: "recoveryRef" in parsed && typeof parsed.recoveryRef === "string" ? parsed.recoveryRef : undefined,
                 indexCommit: "indexCommit" in parsed && typeof parsed.indexCommit === "string" ? parsed.indexCommit : undefined,
                 resetPaths:
                     "resetPaths" in parsed &&
@@ -465,14 +478,17 @@ export async function getRepoName(cwd: string = "."): Promise<string> {
 
 /**
  * Stash changes in the current worktree using Git commit/tree plumbing.
- * This creates a unique, identifiable dangling commit and returns its hash
- * to prevent race conditions with concurrent operations.
+ * This creates a unique commit retained by a dedicated recovery ref and returns
+ * its hash without changing the user's stash stack.
  *
  * @param cwd - Working directory
  * @param message - Optional stash message
  * @returns Stash hash if changes were stashed, null if working tree was clean
+ * @throws When the stash cannot be safely persisted or the worktree reset fails
  */
 export async function stashChanges(cwd: string = ".", message?: string): Promise<string | null> {
+    let temporaryIndexDir: string | undefined;
+    let recoveryRef: string | undefined;
     try {
         // First check if there are any changes to stash, noting which paths were
         // untracked or unstaged so the restore can return them to that state
@@ -512,11 +528,13 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
             ]
         );
 
-        // Add untracked files to the index temporarily so they're included in
-        // the stash tree, then create a stash-shaped commit whose second
-        // parent is the original index snapshot.
-        await execa("git", ["-C", cwd, "add", "-A"]);
-        const { stdout: stashTreeOutput } = await execa("git", ["-C", cwd, "write-tree"]);
+        // Build the working-tree snapshot in a separate index. If persistence
+        // fails, the user's staged/unstaged split has never been changed.
+        temporaryIndexDir = await mkdtemp(join(tmpdir(), "wt-stash-index-"));
+        const snapshotEnv = { GIT_INDEX_FILE: join(temporaryIndexDir, "index") };
+        await execa("git", ["-C", cwd, "read-tree", indexTreeOutput.trim()], { env: snapshotEnv });
+        await execa("git", ["-C", cwd, "add", "-A"], { env: snapshotEnv });
+        const { stdout: stashTreeOutput } = await execa("git", ["-C", cwd, "write-tree"], { env: snapshotEnv });
         const { stdout: stashOutput } = await execa(
             "git",
             [
@@ -535,30 +553,29 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
         const stashHash = stashOutput.trim();
 
         if (!stashHash) {
-            // No changes were stashed (shouldn't happen since we checked above)
-            return null;
+            throw new Error("Git did not create a stash commit.");
         }
 
-        // Record the dangling stash commit before the destructive reset so an
-        // interrupted run can recover both content and index state.
-        try {
-            await writeFile(
-                await stashRecordPath(cwd),
-                JSON.stringify({
-                    hash: stashHash,
-                    message: message ?? "",
-                    createdAt: new Date().toISOString(),
-                    indexCommit: indexCommitOutput.trim(),
-                    resetPaths,
-                })
-            );
-        } catch (recordError: unknown) {
-            // Non-fatal: the stash succeeded and callers restore by hash
-            console.warn(
-                chalk.yellow("Could not record the stash for crash recovery:"),
-                recordError instanceof Error ? recordError.message : recordError
-            );
-        }
+        // A hash in JSON alone does not protect an object from Git GC. Both the
+        // ref and recovery metadata must exist before any destructive reset.
+        // Identical snapshots can have identical hashes, but each operation
+        // needs its own ref so another run's cleanup cannot remove this backup.
+        const ref = stashRecoveryRef();
+        await execa("git", ["-C", cwd, "update-ref", ref, stashHash]);
+        recoveryRef = ref;
+        await writeFile(
+            await stashRecordPath(cwd),
+            JSON.stringify({
+                hash: stashHash,
+                message: message ?? "",
+                createdAt: new Date().toISOString(),
+                recoveryRef,
+                indexCommit: indexCommitOutput.trim(),
+                resetPaths,
+            }),
+            // Never replace another interrupted or concurrent operation's record.
+            { flag: "wx" }
+        );
 
         // Reset the working directory to HEAD to complete the stash effect.
         await execa("git", ["-C", cwd, "reset", "--hard", "HEAD"]);
@@ -570,14 +587,22 @@ export async function stashChanges(cwd: string = ".", message?: string): Promise
     } catch (error: unknown) {
         const execaError = error as ExecaError; // execa rejects with ExecaError
         console.error(chalk.red("Failed to stash changes:"), execaError.stderr || execaError.message);
-        return null;
+        if (recoveryRef) {
+            console.error(chalk.yellow(`A backup of your changes is preserved at ${recoveryRef}.`));
+        }
+        // Callers must abort rather than treating a failed stash as a clean tree.
+        throw error;
+    } finally {
+        if (temporaryIndexDir) {
+            await rm(temporaryIndexDir, { recursive: true, force: true }).catch(() => {});
+        }
     }
 }
 /**
  * Apply a specific stash by hash
  * This ensures we restore the exact changes that were stashed, avoiding conflicts
- * with the shared stash stack. The commit is dangling (created by `stashChanges`),
- * so on failure the hash must be surfaced to the user for manual recovery.
+ * with the shared stash stack. On failure the recovery ref and metadata are
+ * retained and the hash is surfaced to the user for manual recovery.
  *
  * @param stashHash - The unique hash of the stash to apply
  * @param cwd - Working directory
@@ -604,6 +629,10 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
                 }
             }
             await rm(await stashRecordPath(cwd), { force: true });
+            if (isStashRecoveryRef(record.recoveryRef)) {
+                // Delete only our own ref, and only if it still holds this stash.
+                await execa("git", ["-C", cwd, "update-ref", "-d", record.recoveryRef, stashHash]);
+            }
         }
         return true;
     } catch (error: unknown) {
