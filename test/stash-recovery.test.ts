@@ -123,6 +123,42 @@ describe('durable stash recovery', () => {
         expect(await readFile(join(repo, 'README.md'), 'utf8')).toBe('conflicting local change\n');
     });
 
+    it.each([false, true])('preserves index changes made while stashed (linked worktree: %s)', async (linked) => {
+        await writeFile(join(repo, 'unrelated.txt'), 'version A\n');
+        await git('add', 'unrelated.txt');
+        await git('commit', '-m', 'Track unrelated file');
+        if (linked) {
+            const linkedRepo = join(testDir, 'linked');
+            await git('worktree', 'add', '-b', 'linked', linkedRepo);
+            repo = linkedRepo;
+        }
+        await makeChanges();
+        const original = await snapshot();
+        const hash = await stashChanges(repo, 'index drift');
+        const record = await readStashRecord(repo);
+        await writeFile(join(repo, 'unrelated.txt'), 'version B\n');
+        await git('add', 'unrelated.txt');
+        await writeFile(join(repo, 'unrelated.txt'), 'version C\n');
+        const staged = (await git('diff', '--cached', '--binary')).stdout;
+        const unstaged = (await git('diff', '--binary')).stdout;
+
+        expect(await applyAndDropStash(hash!, repo)).toBe(false);
+
+        expect((await git('show', ':unrelated.txt')).stdout).toBe('version B');
+        expect(await readFile(join(repo, 'unrelated.txt'), 'utf8')).toBe('version C\n');
+        expect((await git('diff', '--cached', '--binary')).stdout).toBe(staged);
+        expect((await git('diff', '--binary')).stdout).toBe(unstaged);
+        expect(await readStashRecord(repo)).toEqual(record);
+        await git('reflog', 'expire', '--expire=now', '--all');
+        await git('gc', '--prune=now');
+        expect((await git('rev-parse', record!.recoveryRef!)).stdout).toBe(hash);
+        // Once the new changes have been saved separately, the original stash
+        // remains recoverable with its exact staged/unstaged/untracked split.
+        await git('stash', 'push', '-m', 'Save concurrent work');
+        expect(await applyAndDropStash(hash!, repo)).toBe(true);
+        expect(await snapshot()).toEqual(original);
+    });
+
     it('does not change the user stash stack', async () => {
         await writeFile(join(repo, 'README.md'), 'existing user stash\n');
         await git('stash', 'push', '-m', 'user stash');
@@ -203,7 +239,16 @@ describe('durable stash recovery', () => {
         await runWrappedStash(shell, true);
     });
 
-    async function runWrappedStash(shell: string, conflict: boolean) {
+    it.each(['bash', 'zsh'])('preserves a new staged version and fails safely after editor index changes in %s', async (shell) => {
+        await runWrappedStash(shell, true, true);
+    });
+
+    async function runWrappedStash(shell: string, conflict: boolean, indexDrift = false) {
+        if (indexDrift) {
+            await writeFile(join(repo, 'unrelated.txt'), 'version A\n');
+            await git('add', 'unrelated.txt');
+            await git('commit', '-m', 'Track unrelated file');
+        }
         await makeChanges();
         const before = await snapshot();
         const bin = join(testDir, 'bin');
@@ -214,6 +259,13 @@ describe('durable stash recovery', () => {
         const cwdResult = join(testDir, 'shell-cwd');
         const editor = join(bin, 'conflicting-editor');
         await writeFile(editor, '#!/bin/sh\nprintf "conflicting local change\\n" > "$WT_SOURCE/README.md"\n');
+        if (indexDrift) {
+            await writeFile(editor, `#!/bin/sh
+printf 'version B\\n' > "$WT_SOURCE/unrelated.txt"
+git -C "$WT_SOURCE" add unrelated.txt
+printf 'version C\\n' > "$WT_SOURCE/unrelated.txt"
+`);
+        }
         await chmod(editor, 0o755);
         const result = await execa(shell, ['-c', `
             eval "$(wt shellenv ${shell})"
@@ -240,7 +292,14 @@ describe('durable stash recovery', () => {
             const record = await readStashRecord(repo);
             expect(record?.hash).toBeTruthy();
             expect((await git('rev-parse', record!.recoveryRef!)).stdout).toBe(record!.hash);
-            expect(await readFile(join(repo, 'README.md'), 'utf8')).toBe('conflicting local change\n');
+            if (indexDrift) {
+                expect(result.stderr).toContain('source index changed');
+                expect((await git('show', ':unrelated.txt')).stdout).toBe('version B');
+                expect(await readFile(join(repo, 'unrelated.txt'), 'utf8')).toBe('version C\n');
+                expect(await readFile(join(repo, 'README.md'), 'utf8')).toBe('original\n');
+            } else {
+                expect(await readFile(join(repo, 'README.md'), 'utf8')).toBe('conflicting local change\n');
+            }
         } else {
             expect(await snapshot()).toEqual(before);
             expect(await readStashRecord(repo)).toBeNull();

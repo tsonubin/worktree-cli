@@ -612,6 +612,19 @@ export async function applyAndDropStash(stashHash: string, cwd: string = "."): P
     try {
         const record = await readStashRecord(cwd);
 
+        // Stashing reset the source index to the stash's first-parent tree.
+        // Install/setup/editor commands may have staged new work since then.
+        // Refuse before applying anything: replacing that index with the old
+        // snapshot could otherwise discard a staged version that is present
+        // neither in the working tree nor in our recovery commit.
+        if (record?.hash === stashHash && (record.indexCommit || record.resetPaths?.length)) {
+            const { stdout: currentIndex } = await execa("git", ["-C", cwd, "write-tree"]);
+            const { stdout: expectedIndex } = await execa("git", ["-C", cwd, "rev-parse", `${stashHash}^1^{tree}`]);
+            if (currentIndex.trim() !== expectedIndex.trim()) {
+                throw new Error("The source index changed while changes were stashed. Save the newly staged work before recovering the stash; the index, working files, and recovery record have been left untouched.");
+            }
+        }
+
         // Apply the specific stash by hash. The original index is restored
         // explicitly below because the stash tree includes temporarily staged
         // untracked files.
