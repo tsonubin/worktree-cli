@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execa } from 'execa';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { findWorktreeByPath, getWorktrees } from '../src/utils/git.js';
@@ -81,7 +81,8 @@ describe('getWorktrees', () => {
 
         const worktrees = await getWorktrees(ctx.repoDir);
         const weird = worktrees.find(wt => wt.branch === 'weirdtest');
-        expect(weird?.path).toBe(wtPath);
+        // Git reports canonical paths (e.g. /private/var rather than /var on macOS).
+        expect(weird?.path).toBe(await realpath(wtPath));
 
         const byPath = await findWorktreeByPath(wtPath, ctx.repoDir);
         expect(byPath?.branch).toBe('weirdtest');
