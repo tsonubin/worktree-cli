@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execa } from 'execa';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { applyAndDropStash, readStashRecord, stashChanges, stashRecordPath } from '../src/utils/git.js';
@@ -195,4 +195,56 @@ describe('durable stash recovery', () => {
         expect(await snapshot()).toEqual(before);
         expect((await git('branch', '--list', 'must-not-be-created')).stdout).toBe('');
     });
+    it.each(['bash', 'zsh'])('combines auto-cd with faithful stash restoration in %s', async (shell) => {
+        await runWrappedStash(shell, false);
+    });
+
+    it.each(['bash', 'zsh'])('keeps %s in the source directory and exits nonzero when restoration fails', async (shell) => {
+        await runWrappedStash(shell, true);
+    });
+
+    async function runWrappedStash(shell: string, conflict: boolean) {
+        await makeChanges();
+        const before = await snapshot();
+        const bin = join(testDir, 'bin');
+        await mkdir(bin);
+        const cli = resolve(__dirname, '../build/index.js');
+        await symlink(cli, join(bin, 'wt'));
+        const target = join(testDir, 'target with spaces');
+        const cwdResult = join(testDir, 'shell-cwd');
+        const editor = join(bin, 'conflicting-editor');
+        await writeFile(editor, '#!/bin/sh\nprintf "conflicting local change\\n" > "$WT_SOURCE/README.md"\n');
+        await chmod(editor, 0o755);
+        const result = await execa(shell, ['-c', `
+            eval "$(wt shellenv ${shell})"
+            wt new combined --path "$WT_TARGET" --stash -d --editor "$WT_EDITOR"
+            result=$?
+            pwd -P > "$WT_CWD_RESULT"
+            exit $result
+        `], {
+            cwd: repo,
+            reject: false,
+            env: {
+                PATH: `${bin}:${process.env.PATH}`,
+                WT_TARGET: target,
+                WT_SOURCE: repo,
+                WT_CWD_RESULT: cwdResult,
+                WT_EDITOR: conflict ? editor : 'none',
+                XDG_CONFIG_HOME: join(testDir, 'config'),
+                APPDATA: join(testDir, 'config'),
+            },
+        });
+        expect(result.exitCode, result.all ?? result.stderr).toBe(conflict ? 1 : 0);
+        expect((await readFile(cwdResult, 'utf8')).trim()).toBe(await realpath(conflict ? repo : target));
+        if (conflict) {
+            const record = await readStashRecord(repo);
+            expect(record?.hash).toBeTruthy();
+            expect((await git('rev-parse', record!.recoveryRef!)).stdout).toBe(record!.hash);
+            expect(await readFile(join(repo, 'README.md'), 'utf8')).toBe('conflicting local change\n');
+        } else {
+            expect(await snapshot()).toEqual(before);
+            expect(await readStashRecord(repo)).toBeNull();
+        }
+    }
+
 });

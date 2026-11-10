@@ -10,6 +10,7 @@ A CLI tool for managing Git worktrees with a focus on opening them in the Cursor
 - **Stash-aware**: Gracefully handles dirty worktrees with stash/pop workflow
 - **PR Integration**: Create worktrees directly from GitHub PRs or GitLab MRs
 - **Setup Automation**: Run setup scripts automatically with trust-based security
+- **Auto-cd into Worktree**: Pass `-d` to drop your shell straight into the new worktree (requires one-line shell integration)
 
 ## Installation
 
@@ -46,6 +47,7 @@ Options:
 - `-i, --install <packageManager>`: Package manager to use for installing dependencies (npm, pnpm, bun, etc.)
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
+- `-d, --change-dir`: After creation, cd the current shell into the new worktree (requires shell integration; see [Shell Integration](#shell-integration-auto-cd))
 
 Example:
 ```bash
@@ -54,6 +56,7 @@ wt new feature/chat --checkout
 wt new feature/auth -p ./auth-worktree
 wt new feature/deps -i pnpm
 wt new feature/vscode -e code
+wt new feature/quick -d            # land directly in the new worktree
 ```
 
 **Dirty Worktree Handling**: If your main worktree has uncommitted changes, you'll be prompted with options:
@@ -89,12 +92,14 @@ Options:
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
 - `-t, --trust`: Trust and run setup commands without confirmation (for CI environments)
 - `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
+- `-d, --change-dir`: After creation, cd the current shell into the new worktree (requires shell integration; see [Shell Integration](#shell-integration-auto-cd))
 
 Example:
 ```bash
 wt setup feature/new-feature
 wt setup feature/quick-start -i pnpm
 wt setup feature/ci-build --trust  # Skip confirmation in CI
+wt setup feature/onboarding -d     # land directly in the new worktree
 ```
 
 ### Create a new worktree from Pull Request / Merge Request
@@ -120,6 +125,7 @@ Options:
 - `-s, --setup`: Run setup scripts from `worktrees.json` or `.cursor/worktrees.json`
 - `-t, --trust`: Trust and execute setup scripts without confirmation (use with caution)
 - `--stash`: Stash uncommitted changes in the main worktree first and restore them after (for non-interactive runs)
+- `-d, --change-dir`: After creation, cd the current shell into the new worktree (requires shell integration; see [Shell Integration](#shell-integration-auto-cd))
 
 Example:
 ```bash
@@ -142,16 +148,18 @@ wt pr 123 --setup
 wt open [pathOrBranch]
 ```
 
+**Interactive Selection**: Run `wt open` without arguments to see a fuzzy-searchable list of worktrees.
+
 Options:
 - `-e, --editor <editor>`: Editor to use for opening the worktree (overrides default editor)
-
-**Interactive Selection**: Run `wt open` without arguments to see a fuzzy-searchable list of worktrees.
+- `-d, --change-dir`: After opening, cd the current shell into the worktree (requires shell integration; see [Shell Integration](#shell-integration-auto-cd))
 
 Example:
 ```bash
 wt open                    # Interactive selection
 wt open feature/login      # Open by branch name
 wt open ./path/to/worktree # Open by path
+wt open feature/login -d   # Open and cd into the worktree
 ```
 
 ### List worktrees
@@ -252,6 +260,34 @@ The `wt merge` command now follows these safer defaults:
 2. **Worktree Preservation**: Keeps the source worktree after merge (use `--remove` to clean up)
 
 This prevents the previous destructive behavior where uncommitted changes were auto-committed with generic messages and worktrees were automatically deleted.
+
+### Shell Integration (auto-cd)
+
+By default `wt` only manages worktrees on disk — a child process can't change the parent shell's working directory. The `-d, --change-dir` flag (available on `new`, `setup`, `extract`, `pr`, and `open`) makes `wt` write the target path so a small shell wrapper can cd into it after the command exits.
+
+**One-time setup.** Add the wrapper to your shell rc file:
+
+```bash
+# bash (~/.bashrc) or zsh (~/.zshrc)
+eval "$(wt shellenv)"
+```
+
+```fish
+# ~/.config/fish/config.fish
+wt shellenv fish | source
+```
+
+`wt shellenv` auto-detects from `$SHELL`; pass `bash`, `zsh`, or `fish` explicitly to override.
+
+After reloading your shell:
+
+```bash
+wt new feature/login -d        # creates the worktree and cd's into it
+wt setup feature/onboarding -d # creates + runs setup + cd's
+wt open feature/login -d       # opens existing worktree and cd's
+```
+
+Without the wrapper installed, `-d` is a silent no-op — every other side effect (worktree creation, install, editor open) still happens normally.
 
 ### Configure Default Editor
 

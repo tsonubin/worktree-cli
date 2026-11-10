@@ -4,10 +4,11 @@ import { resolve } from "node:path";
 import { findWorktreeByBranch, findWorktreeByPath, validateGitRepo, WorktreeInfo } from "../utils/git.js";
 import { openInEditor } from "../utils/editor.js";
 import { selectWorktree } from "../utils/tui.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 
 export async function openWorktreeHandler(
     pathOrBranch: string = "",
-    options: { editor?: string }
+    options: { editor?: string; changeDir?: boolean } = {}
 ) {
     try {
         // 1. Validate we're in a git repo
@@ -110,6 +111,10 @@ export async function openWorktreeHandler(
             process.exitCode = 1;
         } else if (outcome === "skipped") {
             console.log(chalk.green(`Worktree path: ${targetPath}`));
+        }
+
+        if (options.changeDir) {
+            writeCdTarget(targetPath);
         }
     } catch (error) {
         if (error instanceof Error) {

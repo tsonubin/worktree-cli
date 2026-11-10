@@ -1,3 +1,4 @@
+import { writeCdTarget } from "../utils/cd-target.js";
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
@@ -239,7 +240,7 @@ async function fetchPRBranch(prNumber: string, localBranchName: string, provider
 
 export async function prWorktreeHandler(
     prNumber?: string,
-    options: { path?: string; install?: string; editor?: string; setup?: boolean; stash?: boolean; trust?: boolean } = {}
+    options: { path?: string; install?: string; editor?: string; setup?: boolean; stash?: boolean; trust?: boolean; changeDir?: boolean } = {}
 ) {
     let guard: DirtyStateGuard | undefined;
 
@@ -376,6 +377,10 @@ export async function prWorktreeHandler(
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
         }
         console.log(chalk.green(`Ready for work. Use 'git push' inside the worktree directory to update the ${requestType}.`));
+
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
+        }
 
     } catch (error: unknown) {
         console.error(

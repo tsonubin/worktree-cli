@@ -1,3 +1,4 @@
+import { writeCdTarget } from "../utils/cd-target.js";
 import { execa } from "execa";
 import chalk from "chalk";
 import { stat } from "node:fs/promises";
@@ -10,7 +11,7 @@ import { AtomicWorktreeOperation } from "../utils/atomic.js";
 
 export async function newWorktreeHandler(
     branchName?: string,
-    options: { path?: string; checkout?: boolean; install?: string; editor?: string; stash?: boolean } = {}
+    options: { path?: string; checkout?: boolean; install?: string; editor?: string; stash?: boolean; changeDir?: boolean } = {}
 ) {
     let guard: DirtyStateGuard | undefined;
 
@@ -118,6 +119,10 @@ export async function newWorktreeHandler(
         console.log(chalk.green(`Worktree ${directoryExists ? "opened" : "created"} at ${resolvedPath}.`));
         if (!directoryExists && options.install) {
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
+        }
+
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
         }
 
     } catch (error) {
