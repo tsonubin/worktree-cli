@@ -5,7 +5,7 @@ const POSIX_FUNCTION = `wt() {
     _wt_target_file=$(mktemp -t wt-cd.XXXXXX) || return 1
     WT_CD_FILE="$_wt_target_file" command wt "$@"
     local _wt_exit=$?
-    if [ -s "$_wt_target_file" ]; then
+    if [ "$_wt_exit" -eq 0 ] && [ -s "$_wt_target_file" ]; then
         local _wt_target
         _wt_target=$(cat "$_wt_target_file")
         if [ -d "$_wt_target" ]; then
@@ -21,7 +21,7 @@ const FISH_FUNCTION = `function wt
     set -l _wt_target_file (mktemp -t wt-cd.XXXXXX)
     WT_CD_FILE=$_wt_target_file command wt $argv
     set -l _wt_exit $status
-    if test -s "$_wt_target_file"
+    if test $_wt_exit -eq 0; and test -s "$_wt_target_file"
         set -l _wt_target (cat "$_wt_target_file")
         if test -d "$_wt_target"
             cd "$_wt_target"

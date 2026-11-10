@@ -30,7 +30,7 @@ async function createTestRepo(): Promise<TestContext> {
     await mkdir(repoDir, { recursive: true });
 
     // Initialize git repo
-    await execa('git', ['init'], { cwd: repoDir });
+    await execa('git', ['init', '-b', 'main'], { cwd: repoDir });
     await execa('git', ['config', 'user.email', 'test@test.com'], { cwd: repoDir });
     await execa('git', ['config', 'user.name', 'Test User'], { cwd: repoDir });
 
@@ -209,6 +209,160 @@ describe('wt new', () => {
         // Cleanup
         await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
     });
+
+    it('should fail when the target directory exists but is not a worktree', async () => {
+        const worktreePath = join(ctx.testDir, 'plain-dir');
+        await mkdir(worktreePath, { recursive: true });
+
+        const result = await runCli(
+            ['new', 'feature/plain-dir', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('not a worktree of this repository');
+    });
+
+    it('should fail when the target directory is a worktree for another branch', async () => {
+        const worktreePath = join(ctx.testDir, 'other-branch-wt');
+        await runCli(
+            ['new', 'feature/first', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        const result = await runCli(
+            ['new', 'feature/second', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('is a worktree for branch');
+        expect(result.stderr).toContain('feature/first');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should skip the editor when WT_EDITOR is set to none', async () => {
+        const worktreePath = join(ctx.testDir, 'env-editor');
+
+        // No --editor flag: the WT_EDITOR=none env set by runCli must suppress the editor
+        const result = await runCli(['new', 'feature/env-editor', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('skipping editor open');
+
+        // Cleanup
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should warn about un-restored stashes from previous runs', async () => {
+        // Simulate a crashed run that stashed changes and never restored them
+        await writeFile(
+            join(ctx.repoDir, '.git', 'wt-stash.json'),
+            JSON.stringify({ hash: 'deadbeefcafe', message: 'test', createdAt: '2026-10-19' })
+        );
+
+        const worktreePath = join(ctx.testDir, 'stash-warning');
+        const result = await runCli(
+            ['new', 'feature/stash-warning', '--path', worktreePath, '--editor', 'none'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toContain('deadbeefcafe');
+        expect(result.stderr).toContain('git stash apply');
+
+        // Cleanup
+        await rm(join(ctx.repoDir, '.git', 'wt-stash.json'), { force: true });
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should refuse --stash while an earlier stash record is unrestored', async () => {
+        const record = JSON.stringify({ hash: 'deadbeefcafe', message: 'test', createdAt: '2026-10-19' });
+        const recordPath = join(ctx.repoDir, '.git', 'wt-stash.json');
+        await writeFile(recordPath, record);
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'stash-pending');
+        const result = await runCli(
+            ['new', 'feature/stash-pending', '--path', worktreePath, '--editor', 'none', '--stash'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('git stash apply deadbeefcafe');
+        // The earlier record survives and nothing new was stashed
+        expect(await readFile(recordPath, 'utf-8')).toBe(record);
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+
+        await rm(recordPath, { force: true });
+        await rm(dirtyFile, { force: true });
+    });
+
+    it('should fail headless when the main worktree is dirty and --stash is not set', async () => {
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'headless-dirty');
+        const result = await runCli(['new', 'feature/headless-dirty', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('--stash');
+
+        // Nothing was stashed: the uncommitted file must be untouched
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+        await rm(dirtyFile, { force: true });
+    });
+
+    it('should stash and restore with --stash when run headless', async () => {
+        const dirtyFile = join(ctx.repoDir, 'dirty.txt');
+        await writeFile(dirtyFile, 'uncommitted');
+
+        const worktreePath = join(ctx.testDir, 'headless-stash');
+        const result = await runCli(
+            ['new', 'feature/headless-stash', '--path', worktreePath, '--editor', 'none', '--stash'],
+            ctx.repoDir
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('Changes stashed successfully.');
+        expect(result.stdout).toContain('Restoring your stashed changes...');
+        expect(await readFile(dirtyFile, 'utf-8')).toContain('uncommitted');
+
+        // The untracked file must come back untracked, not silently staged
+        const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: ctx.repoDir });
+        expect(status).toContain('?? dirty.txt');
+
+        // Cleanup
+        await rm(dirtyFile, { force: true });
+        await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: ctx.repoDir }).catch(() => {});
+    });
+
+    it('should fail with guidance when the branch is already checked out', async () => {
+        const worktreePath = join(ctx.testDir, 'colliding-branch');
+        const result = await runCli(['new', 'main', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('already checked out');
+        expect(result.stderr).toContain('wt open main');
+
+        // Nothing should have been created
+        const worktreeExists = await stat(worktreePath).then(() => true).catch(() => false);
+        expect(worktreeExists).toBe(false);
+    });
+});
+
+describe('wt --version', () => {
+    it('should report the package.json version', async () => {
+        const packageJson = JSON.parse(
+            await readFile(resolve(__dirname, '../package.json'), 'utf-8')
+        );
+        const result = await runCli(['--version'], process.cwd());
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe(packageJson.version);
+    });
 });
 
 describe('wt remove', () => {
@@ -309,6 +463,59 @@ describe('Atomic Operations', () => {
         const worktreeExists = await stat(worktreePath).then(() => true).catch(() => false);
         // Note: The current implementation might not fully rollback, this tests the expected behavior
         // expect(worktreeExists).toBe(false);
+    });
+});
+
+describe('Command argument validation', () => {
+    let ctx: TestContext;
+
+    beforeAll(async () => {
+        ctx = await createTestRepo();
+    });
+
+    afterAll(async () => {
+        await ctx.cleanup();
+    });
+
+    it('wt setup should require a branch name', async () => {
+        const result = await runCli(['setup'], ctx.repoDir);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('Branch name is required');
+    });
+
+    it('wt merge should refuse to merge a branch into itself', async () => {
+        const result = await runCli(['merge', 'main'], ctx.repoDir);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('into itself');
+    });
+
+    it('interactive-only invocations should fail headless', async () => {
+        const cases: Array<{ args: string[]; hint: string }> = [
+            { args: ['remove'], hint: "'wt remove'" },
+            { args: ['open'], hint: "'wt open'" },
+            { args: ['pr'], hint: "'wt pr'" },
+            { args: ['purge'], hint: "'wt purge'" },
+        ];
+        for (const { args, hint } of cases) {
+            const result = await runCli(args, ctx.repoDir);
+            expect(result.exitCode, `${args.join(' ')} should fail headless`).toBe(1);
+            expect(result.stderr).toContain(hint);
+        }
+    });
+
+    it('wt setup should require --trust to run setup scripts headless', async () => {
+        await writeFile(join(ctx.repoDir, 'worktrees.json'), JSON.stringify({ 'setup-worktree': ['echo setup-ran'] }));
+        await execa('git', ['add', 'worktrees.json'], { cwd: ctx.repoDir });
+        await execa('git', ['commit', '-m', 'add setup file'], { cwd: ctx.repoDir });
+
+        const worktreePath = join(ctx.testDir, 'headless-setup');
+        const result = await runCli(['setup', 'feature/headless-setup', '--path', worktreePath], ctx.repoDir);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('--trust');
+
+        // Cleanup
+        await rm(join(ctx.repoDir, 'worktrees.json'), { force: true });
     });
 });
 

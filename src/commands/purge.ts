@@ -1,14 +1,20 @@
 import { execa, ExecaError } from "execa";
 import chalk from "chalk";
 import { stat, rm } from "node:fs/promises";
-import { getWorktrees, WorktreeInfo } from "../utils/git.js";
+import { getWorktrees, validateGitRepo, WorktreeInfo } from "../utils/git.js";
 import { selectWorktree, confirm } from "../utils/tui.js";
 import { withSpinner } from "../utils/spinner.js";
 
 export async function purgeWorktreesHandler() {
     try {
         // Ensure we're in a Git repository
-        await execa("git", ["rev-parse", "--is-inside-work-tree"]);
+        await validateGitRepo();
+
+        // Purge is interactive (multi-select plus confirmation) and needs a terminal
+        if (!process.stdin.isTTY) {
+            console.error(chalk.red("Error: 'wt purge' requires an interactive terminal."));
+            process.exit(1);
+        }
 
         // Get all worktrees using the robust parsing utility
         const worktrees = await getWorktrees();

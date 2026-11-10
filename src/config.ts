@@ -9,6 +9,9 @@ const packageJsonPath = path.resolve(__dirname, '../package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 const packageName = packageJson.name;
 
+// Package version for `wt --version` (semantic-release rewrites it at publish time)
+export const packageVersion = packageJson.version;
+
 // Define the structure of the configuration
 interface ConfigSchema {
     defaultEditor: string;
@@ -39,9 +42,10 @@ const config = new Conf<ConfigSchema>({
     schema,
 });
 
-// Function to get the default editor
+// Function to get the default editor (WT_EDITOR env var overrides the stored config,
+// e.g. WT_EDITOR=none to suppress editor launches in CI/tests)
 export function getDefaultEditor(): string {
-    return config.get('defaultEditor');
+    return process.env.WT_EDITOR || config.get('defaultEditor');
 }
 
 // Function to set the default editor
