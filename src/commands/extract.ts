@@ -15,10 +15,11 @@ import { resolveWorktreePath, validateBranchName } from "../utils/paths.js";
 import { AtomicWorktreeOperation } from "../utils/atomic.js";
 import { handleDirtyState } from "../utils/tui.js";
 import { onShutdown } from "../utils/shutdown.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 
 export async function extractWorktreeHandler(
     branchName?: string,
-    options: { path?: string; install?: string; editor?: string } = {}
+    options: { path?: string; install?: string; editor?: string; changeDir?: boolean } = {}
 ) {
     let stashHash: string | null = null;
     let unregisterShutdown: (() => void) | null = null;
@@ -178,6 +179,10 @@ export async function extractWorktreeHandler(
         console.log(chalk.green(`\nWorktree extracted at ${resolvedPath}.`));
         if (options.install) {
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
+        }
+
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
         }
 
     } catch (error) {

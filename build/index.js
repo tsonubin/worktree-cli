@@ -10,6 +10,7 @@ import { configHandler } from "./commands/config.js";
 import { prWorktreeHandler } from "./commands/pr.js";
 import { openWorktreeHandler } from "./commands/open.js";
 import { extractWorktreeHandler } from "./commands/extract.js";
+import { shellenvHandler } from "./commands/shellenv.js";
 const program = new Command();
 program
     .name("wt")
@@ -22,6 +23,7 @@ program
     .option("-c, --checkout", "Create new branch if it doesn't exist and checkout automatically", false)
     .option("-i, --install <packageManager>", "Package manager to use for installing dependencies (npm, pnpm, bun, etc.)")
     .option("-e, --editor <editor>", "Editor to use for opening the worktree (e.g., code, webstorm, windsurf, etc.)")
+    .option("-d, --change-dir", "After creation, cd the parent shell into the new worktree (requires shell integration; see 'wt shellenv')", false)
     .description("Create a new worktree for the specified branch, install dependencies if specified, and open in editor.")
     .action(newWorktreeHandler);
 program
@@ -32,6 +34,7 @@ program
     .option("-i, --install <packageManager>", "Package manager to use for installing dependencies (npm, pnpm, bun, etc.)")
     .option("-e, --editor <editor>", "Editor to use for opening the worktree (e.g., code, webstorm, windsurf, etc.)")
     .option("-t, --trust", "Trust and run setup commands without confirmation (for CI environments)", false)
+    .option("-d, --change-dir", "After creation, cd the parent shell into the new worktree (requires shell integration; see 'wt shellenv')", false)
     .description("Create a new worktree and run setup scripts from worktrees.json or .cursor/worktrees.json")
     .action(setupWorktreeHandler);
 program
@@ -67,12 +70,14 @@ program
     .option("-e, --editor <editor>", "Editor to use for opening the worktree (overrides default editor)")
     .option("-s, --setup", "Run setup scripts from worktrees.json or .cursor/worktrees.json")
     .option("-t, --trust", "Trust and execute setup scripts without confirmation (use with caution)")
+    .option("-d, --change-dir", "After creation, cd the parent shell into the new worktree (requires shell integration; see 'wt shellenv')", false)
     .description("Fetch the branch for a given GitHub PR or GitLab MR number and create a worktree.")
     .action(prWorktreeHandler);
 program
     .command("open")
     .argument("[pathOrBranch]", "Path to worktree or branch name to open")
     .option("-e, --editor <editor>", "Editor to use for opening the worktree (overrides default editor)")
+    .option("-d, --change-dir", "After opening, cd the parent shell into the worktree (requires shell integration; see 'wt shellenv')", false)
     .description("Open an existing worktree in the editor.")
     .action(openWorktreeHandler);
 program
@@ -81,6 +86,7 @@ program
     .option("-p, --path <path>", "Relative path/folder name for the worktree")
     .option("-i, --install <packageManager>", "Package manager to use for installing dependencies (npm, pnpm, bun, etc.)")
     .option("-e, --editor <editor>", "Editor to use for opening the worktree (overrides default editor)")
+    .option("-d, --change-dir", "After extraction, cd the parent shell into the new worktree (requires shell integration; see 'wt shellenv')", false)
     .description("Extract an existing branch as a new worktree. If no branch is specified, extracts the current branch.")
     .action(extractWorktreeHandler);
 program
@@ -119,4 +125,9 @@ program
     .addCommand(new Command("path")
     .description("Show the path to the configuration file.")
     .action(() => configHandler("path")));
+program
+    .command("shellenv")
+    .argument("[shell]", "Shell to emit the wrapper for: bash, zsh, or fish (auto-detected from $SHELL)")
+    .description("Print a shell wrapper that lets `wt -d ...` cd the parent shell into the worktree. Add `eval \"$(wt shellenv)\"` to your shell rc file.")
+    .action(shellenvHandler);
 program.parse(process.argv);

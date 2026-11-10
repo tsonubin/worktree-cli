@@ -9,6 +9,7 @@ import { AtomicWorktreeOperation } from "../utils/atomic.js";
 import { handleDirtyState } from "../utils/tui.js";
 import { runSetupScriptsSecure } from "../utils/setup.js";
 import { onShutdown } from "../utils/shutdown.js";
+import { writeCdTarget } from "../utils/cd-target.js";
 export async function setupWorktreeHandler(branchName = "main", options = {}) {
     let stashHash = null;
     let unregisterShutdown = null;
@@ -144,6 +145,9 @@ export async function setupWorktreeHandler(branchName = "main", options = {}) {
         console.log(chalk.green(`Worktree ${directoryExists ? "opened" : "created"} at ${resolvedPath}.`));
         if (!directoryExists && options.install) {
             console.log(chalk.green(`Dependencies installed using ${options.install}.`));
+        }
+        if (options.changeDir) {
+            writeCdTarget(resolvedPath);
         }
     }
     catch (error) {
